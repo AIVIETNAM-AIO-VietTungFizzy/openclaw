@@ -1,0 +1,20 @@
+{
+  "name": "@openclaw/paperclip-contract-plugin",
+  "version": "2026.5.31",
+  "private": true,
+  "description": "Paperclip↔OpenClaw frozen-contract governance plugin (facade tool + trusted tool policy).",
+  "type": "module",
+  "dependencies": {
+    "axios": "1.16.0",
+    "typebox": "1.1.39",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

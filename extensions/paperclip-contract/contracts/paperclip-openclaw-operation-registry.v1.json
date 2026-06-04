@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperclip.ai/schemas/paperclip-openclaw-operation-registry.v1.json",
+  "title": "Paperclip–OpenClaw Operation Registry",
+  "description": "Registry of all Paperclip Layer 4B operations exposed to OpenClaw agents via the contract facade. Each operation declares its risk classification, mutation flag, idempotency requirements, HTTP verb/path, and optional approval class.",
+  "version": "2026-05-28",
+  "operations": {
+    "paperclip.ready_work": {
+      "description": "Fetch all work items currently available for the agent to work on.",
+      "risk": "free",
+      "mutation": false,
+      "requiresIdempotencyKey": false,
+      "httpMethod": "GET",
+      "httpPath": "/api/companies/:companyId/issues"
+    },
+    "paperclip.work_item_detail": {
+      "description": "Fetch full detail for a specific work item.",
+      "risk": "free",
+      "mutation": false,
+      "requiresIdempotencyKey": false,
+      "httpMethod": "GET",
+      "httpPath": "/api/issues/:id"
+    },
+    "paperclip.raise_blocker": {
+      "description": "Raise a blocker on a work item (indicates it cannot proceed).",
+      "risk": "free",
+      "mutation": true,
+      "requiresIdempotencyKey": true,
+      "httpMethod": "POST",
+      "httpPath": "/api/issues/:id/tree-holds",
+      "approvalClass": "A1"
+    },
+    "paperclip.complete_work_item": {
+      "description": "Mark a work item as complete.",
+      "risk": "approval",
+      "mutation": true,
+      "requiresIdempotencyKey": true,
+      "httpMethod": "POST",
+      "httpPath": "/api/issues/:id/work-products",
+      "approvalClass": "A2",
+      "approval": {
+        "severity": "warning",
+        "allowedDecisions": ["allow-once", "deny"],
+        "timeoutBehavior": "deny",
+        "timeoutSeconds": 300
+      }
+    }
+  },
+  "riskClassification": {
+    "free": {
+      "description": "Operations that need no approval and are always allowed",
+      "requiresApproval": false,
+      "blockBehavior": "never"
+    },
+    "approval": {
+      "description": "Operations that require explicit operator approval before execution",
+      "requiresApproval": true,
+      "blockBehavior": "block-until-approved"
+    },
+    "forbidden": {
+      "description": "Operations not in the registry — blocked unconditionally",
+      "requiresApproval": false,
+      "blockBehavior": "always-block"
+    }
+  }
+}

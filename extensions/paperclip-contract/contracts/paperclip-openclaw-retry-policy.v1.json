@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperclip.ai/schemas/paperclip-openclaw-retry-policy.v1.json",
+  "title": "Paperclip–OpenClaw Retry Policy",
+  "description": "Per-error-code retry policy. Retry decisions are made by the client (OpenClaw Gateway), not the agent. Retryable=true alone does not trigger retry — idempotency key presence and operation type also gate retry.",
+  "version": "2026-05-28",
+  "retryMatrix": {
+    "RATE_LIMITED": {
+      "retryable": true,
+      "maxAttempts": 2,
+      "respectRetryAfter": true,
+      "backoffMs": [1000, 3000],
+      "requiresIdempotencyKey": false,
+      "notes": "Honor Retry-After header on 429. Prefer waiting over blind backoff."
+    },
+    "UPSTREAM_UNAVAILABLE": {
+      "retryable": true,
+      "maxAttempts": 3,
+      "respectRetryAfter": false,
+      "backoffMs": [1000, 3000, 10000],
+      "requiresIdempotencyKey": true,
+      "notes": "503 from Paperclip 4B. Only retry if idempotency key present."
+    },
+    "TIMEOUT": {
+      "retryable": true,
+      "maxAttempts": 2,
+      "respectRetryAfter": false,
+      "backoffMs": [1000, 3000],
+      "requiresIdempotencyKey": true,
+      "notes": "Client-side or proxy timeout. Only retry mutations with idempotency key."
+    },
+    "SCHEMA_VALIDATION_FAILED": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "notes": "Bad params — retrying will not fix validation errors."
+    },
+    "POLICY_DENIED": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "notes": "Forbidden operation — retrying will not change the policy decision."
+    },
+    "APPROVAL_DENIED": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "notes": "Operator denied — retry only with new approval."
+    },
+    "IDEMPOTENCY_CONFLICT": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "notes": "Same key used with different payload — retrying will not resolve the conflict."
+    },
+    "WORK_ITEM_BLOCKED": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "notes": "Must resolve blockers before retrying."
+    },
+    "UNKNOWN_STATE": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "notes": "Manual review required — automated retry is not safe."
+    },
+    "UPSTREAM_FAILED": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "notes": "Known failure mode — retrying may compound the problem."
+    }
+  },
+  "retryGatingRules": {
+    "description": "All three conditions must be true to retry a retryable error",
+    "conditions": [
+      "The error code's retryable field is true",
+      "A valid idempotencyKey is present in the request",
+      "The operation is either read-only OR the idempotency store confirmed no prior completion"
+    ]
+  },
+  "backoffStrategy": {
+    "description": "Exponential backoff with jitter, capped at 10 seconds",
+    "formula": "min((baseMs + random_jitter) * 2^attempt, 10000)",
+    "jitterRange": "0–200ms added to base before exponential growth",
+    "capMs": 10000
+  }
+}

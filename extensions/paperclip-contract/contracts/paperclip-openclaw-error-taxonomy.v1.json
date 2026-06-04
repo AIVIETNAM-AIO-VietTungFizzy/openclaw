@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperclip.ai/schemas/paperclip-openclaw-error-taxonomy.v1.json",
+  "title": "Paperclip–OpenClaw Error Taxonomy",
+  "description": "Exhaustive error code taxonomy for the Paperclip ↔ OpenClaw contract. Each code maps to a category, retryability, and handler behavior.",
+  "version": "2026-05-28",
+  "errorCodes": {
+    "INVALID_REQUEST": {
+      "category": "SCHEMA",
+      "retryable": false,
+      "description": "Malformed envelope — missing required fields or wrong structure.",
+      "handler": "Return 400 immediately; do not retry."
+    },
+    "CONTRACT_VERSION_UNSUPPORTED": {
+      "category": "SCHEMA",
+      "retryable": false,
+      "description": "contractVersion is not accepted by this server.",
+      "handler": "Return 400; client must upgrade contract version."
+    },
+    "SCHEMA_VALIDATION_FAILED": {
+      "category": "SCHEMA",
+      "retryable": false,
+      "description": "params failed Zod validation against the registry schema.",
+      "handler": "Return 400 with validation error details; do not retry."
+    },
+    "UNKNOWN_OPERATION": {
+      "category": "POLICY",
+      "retryable": false,
+      "description": "Operation not found in the registry.",
+      "handler": "Return 403 Forbidden; operation is not allowed."
+    },
+    "POLICY_DENIED": {
+      "category": "POLICY",
+      "retryable": false,
+      "description": "Operation is forbidden for the caller's package/lane.",
+      "handler": "Return 403; details.required_package may indicate needed upgrade."
+    },
+    "APPROVAL_REQUIRED": {
+      "category": "POLICY",
+      "retryable": false,
+      "description": "Operation requires approval before execution.",
+      "handler": "Return 403; details.approval_class indicates required approval class. Block until approval is granted."
+    },
+    "APPROVAL_DENIED": {
+      "category": "POLICY",
+      "retryable": false,
+      "description": "Approval was denied by the operator.",
+      "handler": "Return 403; do not retry without new approval."
+    },
+    "APPROVAL_TIMEOUT": {
+      "category": "POLICY",
+      "retryable": false,
+      "description": "Approval request expired or no route to approver.",
+      "handler": "Return 403; default deny on timeout."
+    },
+    "IDEMPOTENCY_KEY_REQUIRED": {
+      "category": "IDEMPOTENCY",
+      "retryable": false,
+      "description": "Mutation operation missing idempotencyKey.",
+      "handler": "Return 400; client must provide idempotencyKey."
+    },
+    "IDEMPOTENCY_CONFLICT": {
+      "category": "IDEMPOTENCY",
+      "retryable": false,
+      "description": "Same idempotencyKey used with different request payload hash.",
+      "handler": "Return 409 Conflict; do not retry."
+    },
+    "WORK_ITEM_NOT_FOUND": {
+      "category": "UPSTREAM",
+      "retryable": false,
+      "description": "Referenced work item does not exist (404).",
+      "handler": "Return 404; do not retry."
+    },
+    "WORK_ITEM_BLOCKED": {
+      "category": "EXECUTION",
+      "retryable": false,
+      "description": "Work item has open blockers; cannot complete.",
+      "handler": "Return 409 Conflict; resolve blockers before retry."
+    },
+    "RATE_LIMITED": {
+      "category": "UPSTREAM",
+      "retryable": true,
+      "description": "Server-side rate limit hit.",
+      "handler": "Respect Retry-After header; retry up to configured max attempts."
+    },
+    "TIMEOUT": {
+      "category": "UPSTREAM",
+      "retryable": true,
+      "description": "Client network timeout.",
+      "handler": "Retry with backoff if idempotency key present; otherwise fail."
+    },
+    "UPSTREAM_UNAVAILABLE": {
+      "category": "UPSTREAM",
+      "retryable": true,
+      "description": "Paperclip 4B server is unavailable (503).",
+      "handler": "Retry with backoff [1000, 3000, 10000]ms; requires idempotency key."
+    },
+    "UPSTREAM_FAILED": {
+      "category": "UPSTREAM",
+      "retryable": false,
+      "description": "Known upstream failure that cannot be retried safely.",
+      "handler": "Return 502; do not retry."
+    },
+    "UNKNOWN_STATE": {
+      "category": "EXECUTION",
+      "retryable": false,
+      "description": "Mutation state is unclear (pending entry in unknown state).",
+      "handler": "Return 500; requires manual review."
+    },
+    "UNKNOWN_ERROR": {
+      "category": "INTERNAL",
+      "retryable": false,
+      "description": "Unclassified internal error.",
+      "handler": "Return 500; log for investigation; do not retry."
+    }
+  }
+}

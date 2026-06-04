@@ -1,0 +1,39 @@
+{
+  "id": "paperclip-contract",
+  "name": "Paperclip Contract",
+  "description": "Governs Paperclip Layer 4B operations behind a frozen contract (request/response/error/retry/idempotency) with a trusted tool policy.",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "contracts": {
+    "tools": ["paperclip_contract_call"]
+  },
+  "uiHints": {
+    "baseUrl": {
+      "label": "Paperclip 4B Base URL",
+      "help": "Base URL of the Paperclip 4B server (fallback: PAPERCLIP_BASE_URL env var)."
+    },
+    "targetEnv": {
+      "label": "Target Environment",
+      "help": "Environment label scoping the idempotency request hash (fallback: PAPERCLIP_TARGET_ENV env var)."
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "baseUrl": { "type": "string" },
+      "targetEnv": { "type": "string" },
+      "storeTtlMs": { "type": "number" },
+      "policyGuardUrl": { "type": "string" },
+      "serviceToken": { "type": "string", "secret": true },
+      "tenantId": { "type": "string" },
+      "employeeId": { "type": "string" },
+      "agentId": { "type": "string" },
+      "package": { "type": "string", "enum": ["L0", "L1", "L2", "L3"] },
+      "failMode": { "type": "string", "enum": ["deny", "allow"] },
+      "cacheTtlMs": { "type": "number" }
+    }
+  }
+}

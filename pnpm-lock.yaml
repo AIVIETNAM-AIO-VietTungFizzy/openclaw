@@ -1262,6 +1262,22 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  extensions/paperclip-contract:
+    dependencies:
+      axios:
+        specifier: 1.16.0
+        version: 1.16.0
+      typebox:
+        specifier: 1.1.39
+        version: 1.1.39
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
   extensions/perplexity:
     devDependencies:
       '@openclaw/plugin-sdk':
