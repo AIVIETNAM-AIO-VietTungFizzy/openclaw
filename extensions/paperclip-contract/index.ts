@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { definePluginEntry, type AnyAgentTool } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-runtime";
 import { Type } from "typebox";
 import { createFacade, type FacadeConfig } from "./src/facade.js";
 import { classifyToolCall, classifyOperationRisk, resolveApprovalRouting } from "./src/guard.js";
+import { createPaperclipBoardApproval } from "./src/paperclip-approval-client.js";
 import { createPolicyClient, type PolicyClient } from "./src/policy-client.js";
 
 const FACADE_TOOL_NAME = "paperclip_contract_call";
@@ -17,10 +19,21 @@ interface PolicyIdentity {
   package: string;
 }
 
+/** Paperclip board (surface ②) routing config — present only when fully set. */
+interface BoardConfig {
+  baseUrl: string;
+  companyId: string;
+  /** Optional: the Paperclip agent UUID for heartbeat wakeup. null when absent. */
+  agentId?: string;
+  resumeCallbackUrl: string;
+}
+
 interface ResolvedConfig {
   facade: FacadeConfig;
   /** Present only when the control-plane Policy Guard is fully configured. */
   policy: { client: PolicyClient; identity: PolicyIdentity } | null;
+  /** Present only when surface-② (Paperclip board) routing is fully configured. */
+  board: BoardConfig | null;
 }
 
 function str(v: unknown): string | undefined {
@@ -65,7 +78,21 @@ function readConfig(api: OpenClawPluginApi): ResolvedConfig {
     });
     policy = { client, identity: { tenantId, employeeId, package: pkg } };
   }
-  return { facade, policy };
+
+  // Surface-② (Paperclip board) routing config. The resume callback URL defaults
+  // to the control-plane derived from the policyGuardUrl (…/enforce → …/approvals/resume).
+  const companyId = str(cfg.companyId) ?? process.env.PAPERCLIP_COMPANY_ID;
+  const agentId = str(cfg.agentId) ?? process.env.PAPERCLIP_AGENT_ID;
+  const resumeCallbackUrl =
+    str(cfg.resumeCallbackUrl) ??
+    process.env.PAPERCLIP_RESUME_CALLBACK_URL ??
+    (url ? url.replace(/\/api\/core\/enforce\/?$/, "/api/core/approvals/resume") : undefined);
+  // Board routing needs a company + a resume callback; the agent id is optional
+  // (only used for Paperclip's heartbeat wakeup).
+  const board: BoardConfig | null =
+    companyId && resumeCallbackUrl ? { baseUrl, companyId, agentId, resumeCallbackUrl } : null;
+
+  return { facade, policy, board };
 }
 
 const EnvelopeToolSchema = Type.Object(
@@ -140,8 +167,13 @@ export default definePluginEntry({
   description:
     "Governs OpenClaw tool use against the control-plane Policy Guard (per-package allow/deny/approval) and routes Paperclip Layer 4B operations through a frozen contract. Falls back to a static guard when the control plane is not configured.",
   register(api: OpenClawPluginApi) {
-    const { facade, policy } = readConfig(api);
+    const { facade, policy, board } = readConfig(api);
     const { call } = createFacade(facade);
+
+    // In-process surface-② board holds: maps (tenant:employee:tool) → the original
+    // enforce session_id so a woken re-attempt replays the now-approved decision.
+    // Lost on gateway restart (a restart-then-retry just re-submits — safe).
+    const boardHolds = new Map<string, { sessionId: string; traceId: string; expiresAt: number }>();
 
     // ── Facade tool: the single governed entry point the agent may call ──────
     api.registerTool({
@@ -168,6 +200,17 @@ export default definePluginEntry({
         // No control plane configured → static behavior (keeps local/manual runs working).
         if (!policy) return legacyEvaluate(event);
 
+        const holdKey = `${policy.identity.tenantId}:${policy.identity.employeeId}:${event.toolName}`;
+        let hold = boardHolds.get(holdKey);
+        if (hold && hold.expiresAt < Date.now()) {
+          boardHolds.delete(holdKey);
+          hold = undefined;
+        }
+        // We generate the session_id so it can be REUSED on a surface-② resume
+        // re-attempt — that triggers enforce()'s idempotency replay (allow once
+        // the board has approved). Normal calls get a fresh uuid each time.
+        const sessionId = hold?.sessionId ?? randomUUID();
+
         // Tool-level governance via the control plane (covers exec, web_fetch,
         // browser, paperclip_contract_call, …).
         const decision = await policy.client.enforceTool({
@@ -175,15 +218,61 @@ export default definePluginEntry({
           employeeId: policy.identity.employeeId,
           package: policy.identity.package,
           toolId: event.toolName,
+          sessionId,
         });
 
         if (decision.decision === "deny") {
+          if (hold) {
+            // Re-attempt while the board approval is still pending (the replay was
+            // denied as idempotency_key_reused) → keep waiting, don't re-submit.
+            return {
+              block: true,
+              blockReason:
+                "Still awaiting Paperclip board approval for this action — try again after the board decides.",
+            };
+          }
           return {
             block: true,
             blockReason: "This action is not permitted for your current package.",
           };
         }
         if (decision.decision === "require_approval") {
+          // Policy Matrix Engine routed this hold to the Paperclip board (②).
+          if (decision.responderSurface === "paperclip_board") {
+            if (!board) {
+              return {
+                block: true,
+                blockReason:
+                  "This action needs board approval, but Paperclip board routing is not configured.",
+              };
+            }
+            const created = await createPaperclipBoardApproval({
+              baseUrl: board.baseUrl,
+              companyId: board.companyId,
+              requestedByAgentId: board.agentId,
+              approvalType: decision.paperclipApprovalType ?? "request_board_approval",
+              traceId: decision.traceId ?? "",
+              approvalRequestId: decision.approvalRequestId ?? "",
+              toolKey: event.toolName,
+              resumeCallbackUrl: board.resumeCallbackUrl,
+            });
+            if (!created.ok) {
+              return {
+                block: true,
+                blockReason: `Could not submit '${event.toolName}' to the Paperclip board: ${created.error}`,
+              };
+            }
+            boardHolds.set(holdKey, {
+              sessionId,
+              traceId: decision.traceId ?? "",
+              expiresAt: Date.now() + (decision.slaSeconds ?? 3600) * 1000,
+            });
+            return {
+              block: true,
+              blockReason: `'${event.toolName}' was submitted to the Paperclip board (approval ${created.approvalId}). It will run once the board approves and you retry the action.`,
+            };
+          }
+          // Default surface ①: synchronous in-gateway operator hold.
           return {
             requireApproval: {
               title: `Approve ${event.toolName}`,
@@ -198,7 +287,9 @@ export default definePluginEntry({
           };
         }
 
-        // Allowed. The facade tool additionally carries operation-level risk.
+        // Allowed. If a board hold was satisfied (approved → replayed), clear it.
+        if (hold) boardHolds.delete(holdKey);
+        // The facade tool additionally carries operation-level risk.
         if (event.toolName !== FACADE_TOOL_NAME) return {};
         return facadeOperationDecision(event);
       },

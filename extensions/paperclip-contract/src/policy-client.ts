@@ -9,12 +9,19 @@
 import { randomUUID } from "node:crypto";
 
 export type EnforceDecision = "allow" | "deny" | "require_approval";
+export type ResponderSurface = "openclaw_hold" | "paperclip_board";
 
 export interface EnforceResult {
   decision: EnforceDecision;
   reason?: string;
   approvalClass?: string;
   slaSeconds?: number;
+  // Policy Matrix Engine routing (present on require_approval).
+  responderSurface?: ResponderSurface;
+  traceId?: string;
+  approvalRequestId?: string;
+  paperclipApprovalType?: string | null;
+  escalationRole?: string | null;
 }
 
 export interface PolicyClientConfig {
@@ -39,6 +46,10 @@ export interface EnforceToolInput {
   employeeId: string;
   package: string;
   toolId: string;
+  // Reuse a prior session_id to trigger enforce()'s idempotency replay (used by
+  // the surface-② resume so an approved board hold re-attempts as allow). Omit
+  // for normal calls — a fresh uuid is generated.
+  sessionId?: string;
 }
 
 interface EnforceResponseBody {
@@ -47,6 +58,14 @@ interface EnforceResponseBody {
   deny_detail?: string;
   approval_class?: string;
   sla_seconds?: number;
+  trace_id?: string;
+  approval_request_id?: string;
+  responder_surface?: string;
+  routing?: {
+    rule_id?: string | null;
+    paperclip_approval_type?: string | null;
+    escalation_role?: string | null;
+  };
 }
 
 function uuid(): string {
@@ -74,6 +93,12 @@ export function createPolicyClient(cfg: PolicyClientConfig): PolicyClient {
         decision: "require_approval",
         approvalClass: body.approval_class,
         slaSeconds: body.sla_seconds,
+        responderSurface:
+          body.responder_surface === "paperclip_board" ? "paperclip_board" : "openclaw_hold",
+        traceId: body.trace_id,
+        approvalRequestId: body.approval_request_id,
+        paperclipApprovalType: body.routing?.paperclip_approval_type ?? null,
+        escalationRole: body.routing?.escalation_role ?? null,
       };
     }
     // Treat anything else (incl. "deny") as deny.
@@ -83,8 +108,12 @@ export function createPolicyClient(cfg: PolicyClientConfig): PolicyClient {
   return {
     async enforceTool(input: EnforceToolInput): Promise<EnforceResult> {
       const key = `${input.package}:${input.toolId}`;
-      const cached = cache.get(key);
-      if (cached && cached.expires > Date.now()) return cached.result;
+      // A reused session_id (surface-② resume) must always hit enforce so the
+      // idempotency replay can return allow — never serve it from the cache.
+      if (!input.sessionId) {
+        const cached = cache.get(key);
+        if (cached && cached.expires > Date.now()) return cached.result;
+      }
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -107,8 +136,9 @@ export function createPolicyClient(cfg: PolicyClientConfig): PolicyClient {
             intent_kind: "tool",
             tool_id: input.toolId,
             // Unique per call so the control-plane idempotency window never
-            // collides distinct tool evaluations within a session.
-            session_id: uuid(),
+            // collides distinct tool evaluations — UNLESS the caller reuses a
+            // prior session_id to trigger the surface-② approval replay.
+            session_id: input.sessionId ?? uuid(),
             caller_service: cfg.callerService,
           }),
           signal: controller.signal,
