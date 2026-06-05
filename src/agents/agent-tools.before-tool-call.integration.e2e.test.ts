@@ -1162,6 +1162,8 @@ describe("before_tool_call hook integration for client tools", () => {
       },
     ];
     setActivePluginRegistry(registry);
+    // Trusted policies enforce from the preserved global-runner registry.
+    initializeGlobalHookRunner(registry);
     try {
       await updateSessionStore(storePath, (store) => {
         store["agent:main:client"] = {

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setEmbeddedMode } from "../infra/embedded-mode.js";
-import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
+import {
+  getGlobalHookRunner,
+  initializeGlobalHookRunner,
+  resetGlobalHookRunner,
+} from "../plugins/hook-runner-global.js";
 import type { HookRunner } from "../plugins/hooks.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
@@ -71,6 +75,9 @@ describe("runBeforeToolCallHook — embedded mode approvals", () => {
     };
     mockGetGlobalHookRunner.mockReturnValue(hookRunner as HookRunner);
     mockCallGatewayTool.mockReset();
+    // Trusted policies now read the global-runner registry; clear it so a prior
+    // test's seeded policies cannot bleed into the next case.
+    resetGlobalHookRunner();
     setActivePluginRegistry(createEmptyPluginRegistry());
   });
 
@@ -281,6 +288,8 @@ describe("runBeforeToolCallHook — embedded mode approvals", () => {
       },
     ];
     setActivePluginRegistry(registry);
+    // Trusted policies enforce from the preserved global-runner registry.
+    initializeGlobalHookRunner(registry);
     (hookRunner.hasHooks as ReturnType<typeof vi.fn>).mockReturnValue(false);
     mockCallGatewayTool.mockResolvedValueOnce({
       id: "approval-policy",
@@ -412,6 +421,8 @@ describe("runBeforeToolCallHook — embedded mode approvals", () => {
       },
     ];
     setActivePluginRegistry(registry);
+    // Trusted policies enforce from the preserved global-runner registry.
+    initializeGlobalHookRunner(registry);
     (hookRunner.hasHooks as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
     const result = await runBeforeToolCallHook({
@@ -480,6 +491,8 @@ describe("runBeforeToolCallHook — embedded mode approvals", () => {
       },
     ];
     setActivePluginRegistry(registry);
+    // Trusted policies enforce from the preserved global-runner registry.
+    initializeGlobalHookRunner(registry);
     runBeforeToolCallMock.mockResolvedValue(undefined);
 
     const result = await runBeforeToolCallHook({

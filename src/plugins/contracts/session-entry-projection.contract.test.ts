@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadSessionStore, updateSessionStore, type SessionEntry } from "../../config/sessions.js";
 import { withTempConfig } from "../../gateway/test-temp-config.js";
 import { resolvePreferredOpenClawTmpDir } from "../../infra/tmp-openclaw-dir.js";
+import { initializeGlobalHookRunner, resetGlobalHookRunner } from "../hook-runner-global.js";
 import { cleanupReplacedPluginHostRegistry, runPluginHostCleanup } from "../host-hook-cleanup.js";
 import { clearPluginHostRuntimeState } from "../host-hook-runtime.js";
 import { patchPluginSessionExtension } from "../host-hook-state.js";
@@ -45,11 +46,13 @@ function extensionNamespace(entry: Record<string, unknown>, pluginId: string, na
 describe("plugin session extension SessionEntry projection", () => {
   beforeEach(() => {
     setActivePluginRegistry(createEmptyPluginRegistry());
+    resetGlobalHookRunner();
     clearPluginHostRuntimeState();
   });
 
   afterEach(() => {
     setActivePluginRegistry(createEmptyPluginRegistry());
+    resetGlobalHookRunner();
     clearPluginHostRuntimeState();
   });
 
@@ -915,6 +918,9 @@ describe("plugin session extension SessionEntry projection", () => {
       },
     });
     setActivePluginRegistry(registry.registry);
+    // Trusted policies enforce from the preserved global-runner registry; seed it
+    // like production activatePluginRegistry so the policy is reachable here.
+    initializeGlobalHookRunner(registry.registry);
 
     const stateDir = await fs.mkdtemp(
       path.join(resolvePreferredOpenClawTmpDir(), "openclaw-host-hooks-policy-read-"),

@@ -16,6 +16,7 @@ import { withTempConfig } from "../../gateway/test-temp-config.js";
 import { emitAgentEvent, resetAgentEventsForTest } from "../../infra/agent-events.js";
 import { resolvePreferredOpenClawTmpDir } from "../../infra/tmp-openclaw-dir.js";
 import { executePluginCommand, validatePluginCommandDefinition } from "../commands.js";
+import { initializeGlobalHookRunner, resetGlobalHookRunner } from "../hook-runner-global.js";
 import { createHookRunner } from "../hooks.js";
 import {
   cleanupReplacedPluginHostRegistry,
@@ -37,6 +38,7 @@ import {
 } from "../host-hook-state.js";
 import { buildPluginAgentTurnPrepareContext, isPluginJsonValue } from "../host-hooks.js";
 import { createEmptyPluginRegistry } from "../registry-empty.js";
+import type { PluginRegistry } from "../registry-types.js";
 import { createPluginRegistry } from "../registry.js";
 import { setActivePluginRegistry } from "../runtime.js";
 import type { PluginRuntime } from "../runtime/types.js";
@@ -88,9 +90,17 @@ function expectRecordFields(record: unknown, expected: Record<string, unknown>) 
   return actual;
 }
 
+// Mirror production activatePluginRegistry: trusted policies enforce from the
+// preserved global-runner registry, not the active registry, so seed both.
+function activateTrustedPolicyRegistry(registry: PluginRegistry): void {
+  setActivePluginRegistry(registry);
+  initializeGlobalHookRunner(registry);
+}
+
 describe("host-hook fixture plugin contract", () => {
   afterEach(() => {
     setActivePluginRegistry(createEmptyPluginRegistry());
+    resetGlobalHookRunner();
     clearPluginHostRuntimeState();
     resetAgentEventsForTest();
   });
@@ -328,7 +338,7 @@ describe("host-hook fixture plugin contract", () => {
       }),
       register: registerTrustedHostHookFixture,
     });
-    setActivePluginRegistry(registry.registry);
+    activateTrustedPolicyRegistry(registry.registry);
 
     const policyResult = await runTrustedToolPolicies(
       { toolName: "blocked_fixture_tool", params: {} },
@@ -356,7 +366,7 @@ describe("host-hook fixture plugin contract", () => {
         },
       },
     ];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies({ toolName: "exec", params: {} }, { toolName: "exec" }),
@@ -380,7 +390,7 @@ describe("host-hook fixture plugin contract", () => {
       },
     });
     registry.trustedToolPolicies = [unreadableRegistration as never];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies({ toolName: "exec", params: {} }, { toolName: "exec" }),
@@ -408,7 +418,7 @@ describe("host-hook fixture plugin contract", () => {
       },
     });
     registry.trustedToolPolicies = [unreadableOwnerRegistration as never];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies({ toolName: "exec", params: {} }, { toolName: "exec" }),
@@ -438,7 +448,7 @@ describe("host-hook fixture plugin contract", () => {
         },
       },
     ];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies({ toolName: "exec", params: {} }, { toolName: "exec" }),
@@ -477,7 +487,7 @@ describe("host-hook fixture plugin contract", () => {
         },
       },
     ];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies({ toolName: "exec", params: {} }, { toolName: "exec" }),
@@ -515,7 +525,7 @@ describe("host-hook fixture plugin contract", () => {
         },
       },
     ];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies(
@@ -544,7 +554,7 @@ describe("host-hook fixture plugin contract", () => {
         },
       },
     ];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies(
@@ -587,7 +597,7 @@ describe("host-hook fixture plugin contract", () => {
         },
       },
     ];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies(
@@ -634,7 +644,7 @@ describe("host-hook fixture plugin contract", () => {
         },
       },
     ];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies(
@@ -678,7 +688,7 @@ describe("host-hook fixture plugin contract", () => {
         },
       },
     ];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies(
@@ -726,7 +736,7 @@ describe("host-hook fixture plugin contract", () => {
         },
       },
     ];
-    setActivePluginRegistry(registry);
+    activateTrustedPolicyRegistry(registry);
 
     await expect(
       runTrustedToolPolicies(

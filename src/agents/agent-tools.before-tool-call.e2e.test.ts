@@ -10,7 +10,11 @@ import {
 } from "../infra/diagnostic-events.js";
 import { MAX_PLUGIN_APPROVAL_TIMEOUT_MS } from "../infra/plugin-approvals.js";
 import { resetDiagnosticSessionStateForTest } from "../logging/diagnostic-session-state.js";
-import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
+import {
+  getGlobalHookRunner,
+  initializeGlobalHookRunner,
+  resetGlobalHookRunner,
+} from "../plugins/hook-runner-global.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { setPluginToolMeta } from "../plugins/tools.js";
@@ -923,6 +927,9 @@ describe("before_tool_call requireApproval handling", () => {
   beforeEach(() => {
     resetDiagnosticSessionStateForTest();
     resetDiagnosticEventsForTest();
+    // Trusted policies now read the global-runner registry; clear it so a prior
+    // test's seeded policies cannot bleed into the next case.
+    resetGlobalHookRunner();
     hookRunner = {
       hasHooks: vi.fn().mockReturnValue(true),
       runBeforeToolCall: vi.fn(),
@@ -1210,6 +1217,8 @@ describe("before_tool_call requireApproval handling", () => {
       },
     ];
     setActivePluginRegistry(registry);
+    // Trusted policies enforce from the preserved global-runner registry.
+    initializeGlobalHookRunner(registry);
 
     let state: ReturnType<typeof getBeforeToolCallPolicyDiagnosticState> | undefined;
     try {
@@ -1277,6 +1286,8 @@ describe("before_tool_call requireApproval handling", () => {
       },
     ];
     setActivePluginRegistry(registry);
+    // Trusted policies enforce from the preserved global-runner registry.
+    initializeGlobalHookRunner(registry);
     hookRunner.runBeforeToolCall.mockResolvedValue(undefined);
 
     const result = await runBeforeToolCallHook({

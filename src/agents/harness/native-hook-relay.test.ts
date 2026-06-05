@@ -2081,6 +2081,9 @@ describe("native hook relay registry", () => {
       },
     ];
     setActivePluginRegistry(registry);
+    // Trusted policies enforce from the preserved global-runner registry; seed it
+    // like production activatePluginRegistry so the policy is reachable here.
+    initializeGlobalHookRunner(registry);
     try {
       await updateSessionStore(storePath, (store) => {
         store["agent:main:session-1"] = {

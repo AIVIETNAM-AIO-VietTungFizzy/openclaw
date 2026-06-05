@@ -1,6 +1,7 @@
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isPlainObject } from "../utils.js";
+import { getGlobalPluginRegistry } from "./hook-runner-global.js";
 import type {
   PluginHookBeforeToolCallEvent,
   PluginHookBeforeToolCallResult,
@@ -10,13 +11,22 @@ import type {
 } from "./hook-types.js";
 import { getPluginSessionExtensionStateSync } from "./host-hook-state.js";
 import type { PluginJsonValue, PluginTrustedToolPolicyRegistration } from "./host-hooks.js";
-import type {
-  PluginRegistry,
-  PluginTrustedToolPolicyRegistryRegistration,
-} from "./registry-types.js";
-import { getActivePluginRegistry } from "./runtime.js";
+import type { PluginTrustedToolPolicyRegistryRegistration } from "./registry-types.js";
 
 type TrustedPolicyRegistration = PluginTrustedToolPolicyRegistryRegistration;
+
+// Trusted policies must keep guarding tool execution even after a scoped
+// harness/provider cold-load replaces the active plugin registry. The global
+// hook runner registry is preserved across those loads (see
+// preserveGatewayHookRunner in the plugin loader), so it is the authoritative
+// enforcement source — the same registry the surviving before_tool_call hooks
+// read from. Reading the active registry here would lose the policy whenever a
+// Codex/Copilot run scopes activation to its provider plugins.
+function getEnforcementPluginRegistry(): {
+  trustedToolPolicies?: TrustedPolicyRegistration[];
+} | null {
+  return getGlobalPluginRegistry();
+}
 
 export type TrustedToolPolicyDiagnosticEntry = {
   id: string;
@@ -25,7 +35,7 @@ export type TrustedToolPolicyDiagnosticEntry = {
 };
 
 export function hasTrustedToolPolicies(): boolean {
-  return copyTrustedPolicyRegistrations(getActivePluginRegistry()).length > 0;
+  return copyTrustedPolicyRegistrations(getEnforcementPluginRegistry()).length > 0;
 }
 
 function unreadableTrustedPolicyRegistration(): TrustedPolicyRegistration {
@@ -39,7 +49,7 @@ function unreadableTrustedPolicyRegistration(): TrustedPolicyRegistration {
 }
 
 function copyTrustedPolicyRegistrations(
-  registry: PluginRegistry | null | undefined,
+  registry: { trustedToolPolicies?: TrustedPolicyRegistration[] } | null | undefined,
 ): TrustedPolicyRegistration[] {
   let policies: unknown;
   try {
@@ -128,7 +138,7 @@ function trustedPolicyFailureResult(
 }
 
 export function getTrustedToolPolicyDiagnosticEntries(): TrustedToolPolicyDiagnosticEntry[] {
-  return copyTrustedPolicyRegistrations(getActivePluginRegistry()).map((registration) => {
+  return copyTrustedPolicyRegistrations(getEnforcementPluginRegistry()).map((registration) => {
     const entry: TrustedToolPolicyDiagnosticEntry = {
       id: readTrustedPolicyId(registration),
       pluginId: trustedPolicyDiagnosticPluginId(registration),
@@ -181,7 +191,7 @@ export async function runTrustedToolPolicies(
       | undefined;
   },
 ): Promise<PluginHookBeforeToolCallResult | undefined> {
-  const policies = copyTrustedPolicyRegistrations(getActivePluginRegistry());
+  const policies = copyTrustedPolicyRegistrations(getEnforcementPluginRegistry());
   let adjustedParams = event.params;
   let hasAdjustedParams = false;
   let approval: PluginHookBeforeToolCallResult["requireApproval"];
