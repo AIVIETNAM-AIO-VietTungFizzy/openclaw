@@ -48,7 +48,12 @@ function str(v: unknown): string | undefined {
  * manual runs keep working.
  */
 function readConfig(api: OpenClawPluginApi): ResolvedConfig {
-  const cfg = (api.config ?? {}) as Record<string, unknown>;
+  // The plugin's own entry config (plugins.entries.paperclip-contract.config) is
+  // exposed as api.pluginConfig; api.config is the full gateway config and does
+  // NOT carry policyGuardUrl/tenantId/etc. Reading api.config left `policy` null,
+  // silently dropping the plugin into legacy mode (static guard, no control-plane
+  // governance). Prefer pluginConfig, fall back to api.config then env vars.
+  const cfg = (api.pluginConfig ?? api.config ?? {}) as Record<string, unknown>;
 
   const baseUrl = str(cfg.baseUrl) ?? process.env.PAPERCLIP_BASE_URL ?? DEFAULT_BASE_URL;
   const targetEnv = str(cfg.targetEnv) ?? process.env.PAPERCLIP_TARGET_ENV;
