@@ -861,6 +861,7 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
           if (
             !device &&
             !skipLocalBackendSelfPairing &&
+            !authOk &&
             shouldClearUnboundScopesForMissingDeviceIdentity({
               decision,
               controlUiAuthPolicy,
