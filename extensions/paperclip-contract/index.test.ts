@@ -276,6 +276,28 @@ describe("paperclip-contract trusted policy: control-plane enforce()", () => {
     }
   });
 
+  it("does NOT locally enforce bundle-mcp (__) tools — they're governed at the LiteLLM /mcp chokepoint", async () => {
+    // Bundle-mcp aggregated tools reach this policy under their OpenClaw DISPLAY
+    // name (<server>__<connector>__<tool>, provider-safe sanitized). CP can't
+    // resolve that name → connector_tool_not_found, which the plugin would
+    // otherwise surface as a misleading "not permitted for your package" block.
+    // These tools are already enforced downstream at LiteLLM with their canonical
+    // connector id, so the local policy must pass them through untouched.
+    const enf = startMockEnforce(() => ({
+      decision: "deny",
+      deny_reason: "connector_tool_not_found",
+    }));
+    try {
+      const { policies } = register(policyConfig(enf.url));
+      const decision = await policies[0].evaluate(evt("ocmt__opencode_a2a__opencode-chat"));
+      expect(decision).not.toMatchObject({ block: true });
+      // The local policy must not even consult enforce for a bundle tool.
+      expect(enf.lastBody()).toBeNull();
+    } finally {
+      await enf.close();
+    }
+  });
+
   it("require_approval → surfaces an approval prompt with deny-on-timeout", async () => {
     const enf = startMockEnforce(() => ({
       decision: "require_approval",
