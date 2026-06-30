@@ -1,3 +1,5 @@
+// Gateway node event dispatcher.
+// Handles device/node-originated events and routes them to sessions/channels.
 import { randomUUID } from "node:crypto";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -29,7 +31,6 @@ import {
   getRuntimeConfig,
   loadOrCreateDeviceIdentity,
   loadSessionEntry,
-  migrateAndPruneGatewaySessionStoreKey,
   normalizeChannelId,
   normalizeMainKey,
   normalizeRpcAttachmentsToChatAttachments,
@@ -43,7 +44,7 @@ import {
   resolveSessionModelRef,
   sanitizeInboundSystemTags,
   sendDurableMessageBatch,
-  updateSessionStore,
+  canonicalizeSessionEntryAliases,
 } from "./server-node-events.runtime.js";
 
 const MAX_EXEC_EVENT_OUTPUT_CHARS = 180;
@@ -66,8 +67,20 @@ export type NodeEventHandleResult = {
   reason?: string;
 };
 
+type NodeAgentCommandInput = Parameters<typeof agentCommandFromIngress>[0];
+
 function normalizeFiniteInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
+}
+
+function dispatchNodeAgentCommand(
+  ctx: NodeEventContext,
+  nodeId: string,
+  input: NodeAgentCommandInput,
+): void {
+  void agentCommandFromIngress(input, defaultRuntime, ctx.deps).catch((err: unknown) => {
+    ctx.logGateway.warn(`agent failed node=${nodeId}: ${formatForLog(err)}`);
+  });
 }
 
 function resolveVoiceTranscriptFingerprint(obj: Record<string, unknown>, text: string): string {
@@ -105,6 +118,8 @@ function shouldDropDuplicateVoiceTranscript(params: {
   fingerprint: string;
   now: number;
 }): boolean {
+  // Voice providers can replay identical transcript fragments during reconnect.
+  // Keep only a bounded last fingerprint per session to avoid duplicate sends.
   const previous = recentVoiceTranscripts.get(params.sessionKey);
   if (
     previous &&
@@ -239,10 +254,9 @@ function compactNotificationEventText(raw: string) {
 type LoadedSessionEntry = ReturnType<typeof loadSessionEntry>;
 
 async function touchSessionStore(params: {
-  cfg: OpenClawConfig;
-  sessionKey: string;
   storePath: LoadedSessionEntry["storePath"];
   canonicalKey: LoadedSessionEntry["canonicalKey"];
+  storeKeys: LoadedSessionEntry["storeKeys"];
   entry: LoadedSessionEntry["entry"];
   sessionId: string;
   now: number;
@@ -251,14 +265,14 @@ async function touchSessionStore(params: {
   if (!storePath) {
     return;
   }
-  await updateSessionStore(storePath, (store) => {
-    const { primaryKey } = migrateAndPruneGatewaySessionStoreKey({
-      cfg: params.cfg,
-      key: params.sessionKey,
-      store,
-    });
-    store[primaryKey] = {
-      ...store[primaryKey],
+  await canonicalizeSessionEntryAliases({
+    storePath,
+    target: {
+      canonicalKey: params.canonicalKey,
+      storeKeys: params.storeKeys,
+    },
+    update: (entry) => ({
+      ...entry,
       sessionId: params.sessionId,
       updatedAt: params.now,
       thinkingLevel: params.entry?.thinkingLevel,
@@ -271,25 +285,23 @@ async function touchSessionStore(params: {
       lastTo: params.entry?.lastTo,
       lastAccountId: params.entry?.lastAccountId,
       lastThreadId: params.entry?.lastThreadId,
-    };
+    }),
   });
 }
 
 function queueSessionStoreTouch(params: {
   ctx: NodeEventContext;
-  cfg: OpenClawConfig;
-  sessionKey: string;
   storePath: LoadedSessionEntry["storePath"];
   canonicalKey: LoadedSessionEntry["canonicalKey"];
+  storeKeys: LoadedSessionEntry["storeKeys"];
   entry: LoadedSessionEntry["entry"];
   sessionId: string;
   now: number;
 }) {
   void touchSessionStore({
-    cfg: params.cfg,
-    sessionKey: params.sessionKey,
     storePath: params.storePath,
     canonicalKey: params.canonicalKey,
+    storeKeys: params.storeKeys,
     entry: params.entry,
     sessionId: params.sessionId,
     now: params.now,
@@ -387,7 +399,7 @@ export const handleNodeEvent = async (
       const cfg = getRuntimeConfig();
       const rawMainKey = normalizeMainKey(cfg.session?.mainKey);
       const sessionKey = sessionKeyRaw.length > 0 ? sessionKeyRaw : rawMainKey;
-      const { storePath, entry, canonicalKey } = loadSessionEntry(sessionKey);
+      const { storePath, entry, canonicalKey, storeKeys } = loadSessionEntry(sessionKey);
       const now = Date.now();
       const fingerprint = resolveVoiceTranscriptFingerprint(obj, text);
       if (shouldDropDuplicateVoiceTranscript({ sessionKey: canonicalKey, fingerprint, now })) {
@@ -396,10 +408,9 @@ export const handleNodeEvent = async (
       const sessionId = entry?.sessionId ?? randomUUID();
       queueSessionStoreTouch({
         ctx,
-        cfg,
-        sessionKey,
         storePath,
         canonicalKey,
+        storeKeys,
         entry,
         sessionId,
         now,
@@ -413,26 +424,20 @@ export const handleNodeEvent = async (
         clientRunId: `voice-${randomUUID()}`,
       });
 
-      void agentCommandFromIngress(
-        {
-          runId,
-          message: text,
-          sessionId,
-          sessionKey: canonicalKey,
-          thinking: "low",
-          deliver: false,
-          messageChannel: "node",
-          inputProvenance: {
-            kind: "external_user",
-            sourceChannel: "voice",
-            sourceTool: "gateway.voice.transcript",
-          },
-          allowModelOverride: false,
+      dispatchNodeAgentCommand(ctx, nodeId, {
+        runId,
+        message: text,
+        sessionId,
+        sessionKey: canonicalKey,
+        thinking: "low",
+        deliver: false,
+        messageChannel: "node",
+        inputProvenance: {
+          kind: "external_user",
+          sourceChannel: "voice",
+          sourceTool: "gateway.voice.transcript",
         },
-        defaultRuntime,
-        ctx.deps,
-      ).catch((err: unknown) => {
-        ctx.logGateway.warn(`agent failed node=${nodeId}: ${formatForLog(err)}`);
+        allowModelOverride: false,
       });
       return undefined;
     }
@@ -469,7 +474,7 @@ export const handleNodeEvent = async (
       const sessionKeyRaw = (link?.sessionKey ?? "").trim();
       const sessionKey = sessionKeyRaw.length > 0 ? sessionKeyRaw : `node-${nodeId}`;
       const cfg = getRuntimeConfig();
-      const { storePath, entry, canonicalKey } = loadSessionEntry(sessionKey);
+      const { storePath, entry, canonicalKey, storeKeys } = loadSessionEntry(sessionKey);
 
       let message = (link?.message ?? "").trim();
       const normalizedAttachments = normalizeRpcAttachmentsToChatAttachments(
@@ -542,7 +547,14 @@ export const handleNodeEvent = async (
 
       const now = Date.now();
       const sessionId = entry?.sessionId ?? randomUUID();
-      await touchSessionStore({ cfg, sessionKey, storePath, canonicalKey, entry, sessionId, now });
+      await touchSessionStore({
+        storePath,
+        canonicalKey,
+        storeKeys,
+        entry,
+        sessionId,
+        now,
+      });
 
       if (deliverRequested && (!channel || !to)) {
         const entryChannel =
@@ -583,27 +595,21 @@ export const handleNodeEvent = async (
         );
       }
 
-      void agentCommandFromIngress(
-        {
-          runId: sessionId,
-          message,
-          images,
-          imageOrder,
-          sessionId,
-          sessionKey: canonicalKey,
-          thinking: link?.thinking ?? undefined,
-          deliver,
-          to: deliveryTo,
-          channel: deliveryChannel,
-          timeout:
-            typeof link?.timeoutSeconds === "number" ? link.timeoutSeconds.toString() : undefined,
-          messageChannel: "node",
-          allowModelOverride: false,
-        },
-        defaultRuntime,
-        ctx.deps,
-      ).catch((err: unknown) => {
-        ctx.logGateway.warn(`agent failed node=${nodeId}: ${formatForLog(err)}`);
+      dispatchNodeAgentCommand(ctx, nodeId, {
+        runId: sessionId,
+        message,
+        images,
+        imageOrder,
+        sessionId,
+        sessionKey: canonicalKey,
+        thinking: link?.thinking ?? undefined,
+        deliver,
+        to: deliveryTo,
+        channel: deliveryChannel,
+        timeout:
+          typeof link?.timeoutSeconds === "number" ? link.timeoutSeconds.toString() : undefined,
+        messageChannel: "node",
+        allowModelOverride: false,
       });
       return undefined;
     }

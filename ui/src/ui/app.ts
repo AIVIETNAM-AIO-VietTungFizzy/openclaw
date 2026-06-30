@@ -1,3 +1,4 @@
+// Control UI module implements app behavior.
 import { LitElement } from "lit";
 import { state } from "lit/decorators.js";
 import { i18n, I18nController, isSupportedLocale, t } from "../i18n/index.ts";
@@ -42,7 +43,11 @@ import {
 } from "./app-lifecycle.ts";
 import { initNativeBridge } from "./app-native-bridge.ts";
 import { createChatSession as createChatSessionInternal } from "./app-render.helpers.ts";
-import { renderApp } from "./app-render.ts";
+import {
+  loadSkillWorkshopMode,
+  loadSkillWorkshopUseCurrentChatForRevisions,
+  renderApp,
+} from "./app-render.ts";
 import {
   exportLogs as exportLogsInternal,
   handleActivityScroll as handleActivityScrollInternal,
@@ -73,6 +78,10 @@ import { normalizeAssistantIdentity } from "./assistant-identity.ts";
 import { restoreChatComposerState } from "./chat/composer-persistence.ts";
 import { exportChatMarkdown } from "./chat/export.ts";
 import {
+  reconcileRealtimeTalkCatalogSelection,
+  type RealtimeTalkCatalogProvider,
+} from "./chat/realtime-talk-catalog.ts";
+import {
   createRealtimeTalkConversationState,
   updateRealtimeTalkConversation,
   type RealtimeTalkConversationEntry,
@@ -84,6 +93,7 @@ import {
   type RealtimeTalkStatus,
 } from "./chat/realtime-talk.ts";
 import type { ChatRunUiStatus } from "./chat/run-lifecycle.ts";
+import type { ChatMessageCache } from "./chat/session-message-cache.ts";
 import type { ChatSideResult } from "./chat/side-result.ts";
 import {
   loadToolsEffective as loadToolsEffectiveInternal,
@@ -103,6 +113,10 @@ import {
   type ExecApprovalRequest,
 } from "./controllers/exec-approval.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
+import {
+  loadSkillWorkshopProposals,
+  type SkillWorkshopState,
+} from "./controllers/skill-workshop.ts";
 import type {
   ClawHubSearchResult,
   ClawHubSkillSecurityVerdict,
@@ -110,6 +124,13 @@ import type {
   SkillMessage,
 } from "./controllers/skills.ts";
 import { importCustomThemeFromUrl } from "./custom-theme.ts";
+import {
+  clearActiveFloatingTooltips,
+  prepareActiveFloatingTooltipsForRender,
+  promoteNativeTitleTooltip,
+  refreshActiveFloatingTooltip,
+  restoreNativeTitleTooltip,
+} from "./dom-tooltips.ts";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
 import type { Tab } from "./navigation.ts";
 import { resolveAgentIdFromSessionKey } from "./session-key.ts";
@@ -232,7 +253,7 @@ export class OpenClawApp extends LitElement {
   @state() userName = bootLocalUserIdentity.name;
   @state() userAvatar = bootLocalUserIdentity.avatar;
   @state() localMediaPreviewRoots: string[] = [];
-  @state() embedSandboxMode: "strict" | "scripts" | "trusted" = "scripts";
+  @state() embedSandboxMode: "strict" | "scripts" | "trusted" = "strict";
   @state() allowExternalEmbedUrls = false;
   @state() chatMessageMaxWidth: string | null = null;
   @state() serverVersion: string | null = null;
@@ -241,6 +262,7 @@ export class OpenClawApp extends LitElement {
   chatSessionMessageSubscriptionKey: string | null = null;
   chatSessionMessageSubscriptionRequestedKey: string | null = null;
   currentSessionId: string | null = null;
+  reconnectResumeSessionId: string | null = null;
   @state() chatLoading = false;
   @state() chatSending = false;
   @state() chatMessage = "";
@@ -271,6 +293,7 @@ export class OpenClawApp extends LitElement {
   @state() chatAvatarStatus: "none" | "local" | "remote" | "data" | null = null;
   @state() chatAvatarReason: string | null = null;
   @state() chatThinkingLevel: string | null = null;
+  @state() chatVerboseLevel: string | null = null;
   @state() chatModelOverrides: Record<string, ChatModelOverride | null> = {};
   @state() chatModelSwitchPromises: Record<string, Promise<boolean>> = {};
   @state() chatModelsLoading = false;
@@ -295,13 +318,20 @@ export class OpenClawApp extends LitElement {
   } | null = null;
   @state() chatQueue: ChatQueueItem[] = [];
   @state() chatQueueBySession: Record<string, ChatQueueItem[]> = {};
+  @state() chatMessagesBySession: ChatMessageCache = new Map();
   @state() chatAttachments: ChatAttachment[] = [];
+  @state() chatReplyTarget: {
+    messageId: string;
+    text: string;
+    senderLabel?: string | null;
+  } | null = null;
   @state() realtimeTalkActive = false;
   @state() realtimeTalkStatus: RealtimeTalkStatus = "idle";
   @state() realtimeTalkDetail: string | null = null;
   @state() realtimeTalkTranscript: string | null = null;
   @state() realtimeTalkConversation: RealtimeTalkConversationEntry[] = [];
   @state() realtimeTalkOptionsOpen = false;
+  @state() realtimeTalkCatalogProviders: RealtimeTalkCatalogProvider[] | null = null;
   @state() realtimeTalkOptions = {
     provider: "",
     model: "",
@@ -398,6 +428,7 @@ export class OpenClawApp extends LitElement {
   @state() configActiveSection: string | null = null;
   @state() configActiveSubsection: string | null = null;
   @state() pendingUpdateExpectedVersion: string | null = null;
+  @state() pendingUpdateHandoff = false;
   @state() updateStatusBanner: { tone: "danger" | "warn" | "info"; text: string } | null = null;
   @state() communicationsFormMode: "form" | "raw" = "form";
   @state() communicationsSearchQuery = "";
@@ -600,6 +631,8 @@ export class OpenClawApp extends LitElement {
   @state() overviewLogCursor = 0;
 
   @state() skillsLoading = false;
+  @state() skillsAgentId: string | null = null;
+  skillsAgentRevision = 0;
   @state() skillsReport: SkillStatusReport | null = null;
   @state() skillsError: string | null = null;
   @state() skillsFilter = "";
@@ -618,7 +651,12 @@ export class OpenClawApp extends LitElement {
   @state() clawhubDetailLoading = false;
   @state() clawhubDetailError: string | null = null;
   @state() clawhubInstallSlug: string | null = null;
-  @state() clawhubInstallMessage: { kind: "success" | "error"; text: string } | null = null;
+  @state() clawhubInstallMessage: {
+    kind: "success" | "error";
+    text: string;
+    acknowledgeSlug?: string;
+    acknowledgeVersion?: string;
+  } | null = null;
   @state() clawhubVerdicts: Record<string, ClawHubSkillSecurityVerdict> = {};
   @state() clawhubVerdictsLoading = false;
   @state() clawhubVerdictsError: string | null = null;
@@ -626,6 +664,25 @@ export class OpenClawApp extends LitElement {
   @state() skillCardContentKeys: Record<string, string> = {};
   @state() skillCardLoadingKey: string | null = null;
   @state() skillCardErrors: Record<string, string> = {};
+  @state() skillWorkshopLoading = false;
+  @state() skillWorkshopAgentId: string | null = null;
+  @state() skillWorkshopLoaded = false;
+  @state() skillWorkshopError: string | null = null;
+  @state() skillWorkshopInspectingKey: string | null = null;
+  @state() skillWorkshopProposals: SkillWorkshopState["skillWorkshopProposals"] = [];
+  @state() skillWorkshopSelectedKey: string | null = null;
+  @state() skillWorkshopActionBusy: SkillWorkshopState["skillWorkshopActionBusy"] = null;
+  @state() skillWorkshopActionNotice: SkillWorkshopState["skillWorkshopActionNotice"] = null;
+  skillWorkshopActionNoticeTimer: ReturnType<typeof globalThis.setTimeout> | number | null = null;
+  @state() skillWorkshopRevisionKey: string | null = null;
+  @state() skillWorkshopRevisionDraft = "";
+  @state() skillWorkshopStatusFilter: SkillWorkshopState["skillWorkshopStatusFilter"] = "pending";
+  @state() skillWorkshopQuery = "";
+  @state() skillWorkshopFilePreviewKey: string | null = null;
+  @state() skillWorkshopFilePreviewQuery = "";
+  @state() skillWorkshopQueueWidth = 360;
+  @state() skillWorkshopMode: SkillWorkshopState["skillWorkshopMode"] = loadSkillWorkshopMode();
+  @state() skillWorkshopUseCurrentChatForRevisions = loadSkillWorkshopUseCurrentChatForRevisions();
 
   @state() healthLoading = false;
   @state() healthResult: HealthSummary | null = null;
@@ -672,6 +729,7 @@ export class OpenClawApp extends LitElement {
   chatLastScrollTop = 0;
   chatHasAutoScrolled = false;
   chatUserNearBottom = true;
+  chatFollowLocked = false;
   chatIsProgrammaticScroll = false;
   chatProgrammaticScrollTarget = 0;
   @state() chatNewMessagesBelow = false;
@@ -742,7 +800,9 @@ export class OpenClawApp extends LitElement {
     });
     if (this.realtimeTalkOptionsOpen) {
       const insideTalkOptions = Array.from(
-        this.querySelectorAll(".agent-chat__talk-options, [aria-label='Talk settings']"),
+        this.querySelectorAll(
+          ".agent-chat__talk-options, [aria-label='Talk settings'], [aria-label='Talk options']",
+        ),
       ).some((node) => path.includes(node));
       if (!insideTalkOptions) {
         this.realtimeTalkOptionsOpen = false;
@@ -768,6 +828,18 @@ export class OpenClawApp extends LitElement {
     }
     this.setChatMobileControlsOpen(false);
   };
+  private nativeTitleTooltipPointerOverHandler = (event: PointerEvent) => {
+    promoteNativeTitleTooltip(event.target, this, "pointer");
+  };
+  private nativeTitleTooltipPointerOutHandler = (event: PointerEvent) => {
+    restoreNativeTitleTooltip(event.target, this, "pointer", event.relatedTarget);
+  };
+  private nativeTitleTooltipFocusInHandler = (event: FocusEvent) => {
+    promoteNativeTitleTooltip(event.target, this, "focus");
+  };
+  private nativeTitleTooltipFocusOutHandler = (event: FocusEvent) => {
+    restoreNativeTitleTooltip(event.target, this, "focus", event.relatedTarget);
+  };
 
   override createRenderRoot() {
     return this;
@@ -778,7 +850,7 @@ export class OpenClawApp extends LitElement {
     this.onSlashAction = async (action: string) => {
       switch (action) {
         case "new-session":
-          await createChatSessionInternal(this as unknown as AppViewState);
+          await createChatSessionInternal(this as unknown as AppViewState, { source: "user" });
           break;
         case "export":
           exportChatMarkdown(this.chatMessages, this.assistantName);
@@ -792,6 +864,10 @@ export class OpenClawApp extends LitElement {
     document.addEventListener("keydown", this.globalKeydownHandler);
     document.addEventListener("keydown", this.chatMobileControlsKeydownHandler);
     document.addEventListener("pointerdown", this.chatMobileControlsPointerdownHandler);
+    this.addEventListener("pointerover", this.nativeTitleTooltipPointerOverHandler);
+    this.addEventListener("pointerout", this.nativeTitleTooltipPointerOutHandler);
+    this.addEventListener("focusin", this.nativeTitleTooltipFocusInHandler);
+    this.addEventListener("focusout", this.nativeTitleTooltipFocusOutHandler);
     handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
     this.nativeBridgeCleanup = initNativeBridge(this);
     void this.initWebPushState();
@@ -801,12 +877,21 @@ export class OpenClawApp extends LitElement {
     handleFirstUpdated(this as unknown as Parameters<typeof handleFirstUpdated>[0]);
   }
 
+  protected override willUpdate() {
+    prepareActiveFloatingTooltipsForRender(this);
+  }
+
   override disconnectedCallback() {
     document.removeEventListener("keydown", this.globalKeydownHandler);
     this.nativeBridgeCleanup?.();
     this.nativeBridgeCleanup = null;
     document.removeEventListener("keydown", this.chatMobileControlsKeydownHandler);
     document.removeEventListener("pointerdown", this.chatMobileControlsPointerdownHandler);
+    this.removeEventListener("pointerover", this.nativeTitleTooltipPointerOverHandler);
+    this.removeEventListener("pointerout", this.nativeTitleTooltipPointerOutHandler);
+    this.removeEventListener("focusin", this.nativeTitleTooltipFocusInHandler);
+    this.removeEventListener("focusout", this.nativeTitleTooltipFocusOutHandler);
+    clearActiveFloatingTooltips(this);
     if (this.sessionSwitchNoticeTimer !== null) {
       window.clearTimeout(this.sessionSwitchNoticeTimer);
       this.sessionSwitchNoticeTimer = null;
@@ -822,9 +907,16 @@ export class OpenClawApp extends LitElement {
 
   protected override updated(changed: Map<PropertyKey, unknown>) {
     handleUpdated(this as unknown as Parameters<typeof handleUpdated>[0], changed);
+    refreshActiveFloatingTooltip(this);
     // Some render callbacks assign tab directly while preparing nested panel state.
     if (changed.has("tab") && this.tab !== "chat" && this.chatMobileControlsOpen) {
       this.setChatMobileControlsOpen(false);
+    }
+    if (
+      this.tab === "skillWorkshop" &&
+      (changed.has("sessionKey") || changed.has("assistantAgentId"))
+    ) {
+      void loadSkillWorkshopProposals(this, { force: true });
     }
     if (!changed.has("sessionKey") || this.agentsPanel !== "tools") {
       return;
@@ -898,8 +990,12 @@ export class OpenClawApp extends LitElement {
     );
   }
 
-  async loadAssistantIdentity() {
-    await loadAssistantIdentityInternal(this);
+  scheduleChatScroll() {
+    scheduleChatScrollInternal(this as unknown as Parameters<typeof scheduleChatScrollInternal>[0]);
+  }
+
+  async loadAssistantIdentity(opts?: { sessionKey?: string; expectedSessionKey?: string }) {
+    await loadAssistantIdentityInternal(this, opts);
   }
 
   applySettings(next: UiSettings) {
@@ -1140,6 +1236,29 @@ export class OpenClawApp extends LitElement {
     this.realtimeTalkOptions = { ...this.realtimeTalkOptions, ...next };
   }
 
+  async fetchRealtimeTalkCatalog() {
+    if (!this.client || !this.connected) {
+      return;
+    }
+    this.realtimeTalkCatalogProviders = null;
+    try {
+      const result = await this.client.request<{
+        realtime?: { providers?: RealtimeTalkCatalogProvider[] };
+      }>("talk.catalog", {});
+      const providers = result?.realtime?.providers ?? [];
+      this.realtimeTalkCatalogProviders = providers;
+      const update = reconcileRealtimeTalkCatalogSelection({
+        providers,
+        selection: this.realtimeTalkOptions,
+      });
+      if (update) {
+        this.updateRealtimeTalkOptions(update);
+      }
+    } catch {
+      this.realtimeTalkCatalogProviders = null;
+    }
+  }
+
   private buildRealtimeTalkLaunchOptions(): RealtimeTalkLaunchOptions {
     const options = this.realtimeTalkOptions ?? {
       provider: "",
@@ -1209,10 +1328,6 @@ export class OpenClawApp extends LitElement {
           if (status === "idle" || status === "error") {
             this.realtimeTalkActive = status !== "idle";
           }
-          if (status === "error" && this.realtimeTalkDetail) {
-            this.lastError = this.realtimeTalkDetail;
-            this.chatError = this.realtimeTalkDetail;
-          }
         },
         onTranscript: (entry) => {
           this.realtimeTalkTranscript = `${entry.role === "user" ? "You" : "OpenClaw"}: ${entry.text}`;
@@ -1236,8 +1351,6 @@ export class OpenClawApp extends LitElement {
       this.realtimeTalkActive = false;
       this.realtimeTalkStatus = "error";
       this.realtimeTalkDetail = error instanceof Error ? error.message : String(error);
-      this.lastError = this.realtimeTalkDetail;
-      this.chatError = this.realtimeTalkDetail;
     }
   }
 

@@ -1,16 +1,17 @@
-import fs from "node:fs";
+// Gateway HTTP session history endpoint.
+// Serves JSON and SSE history snapshots backed by transcript files.
 import type { IncomingMessage, ServerResponse } from "node:http";
-import path from "node:path";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import { getRuntimeConfig } from "../config/io.js";
-import { loadSessionStore } from "../config/sessions.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
+import { normalizeAgentId } from "../routing/session-key.js";
+import { onInternalSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
+import { DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS } from "./chat-display-projection.js";
 import {
   sendInvalidRequest,
   sendJson,
@@ -24,17 +25,19 @@ import {
   resolveSharedSecretHttpOperatorScopes,
 } from "./http-utils.js";
 import { authorizeOperatorScopesForMethod } from "./method-scopes.js";
-import { DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS } from "./server-methods/chat.js";
 import {
   buildSessionHistorySnapshot,
   resolveSessionHistoryTailReadOptions,
   SessionHistorySseState,
 } from "./session-history-state.js";
+import { resolveTranscriptPathForComparison } from "./session-transcript-path.js";
 import {
   readRecentSessionMessagesWithStatsAsync,
-  readSessionMessagesAsync,
+  readSessionMessagesWithSourceAsync,
+} from "./session-transcript-readers.js";
+import {
   resolveFreshestSessionEntryFromStoreKeys,
-  resolveGatewaySessionStoreTarget,
+  resolveGatewaySessionStoreTargetWithStore,
   resolveSessionTranscriptCandidates,
 } from "./session-utils.js";
 
@@ -77,24 +80,12 @@ function resolveLimit(req: IncomingMessage): number | undefined {
   return Math.min(MAX_SESSION_HISTORY_LIMIT, Math.max(1, value));
 }
 
-function canonicalizePath(value: string | undefined): string | undefined {
-  const trimmed = normalizeOptionalString(value);
-  if (!trimmed) {
-    return undefined;
-  }
-  const resolved = path.resolve(trimmed);
-  try {
-    return fs.realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
-}
-
 function sseWrite(res: ServerResponse, event: string, payload: unknown): void {
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+/** Handle `/sessions/:sessionKey/history` JSON/SSE requests. */
 export async function handleSessionHistoryHttpRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -137,9 +128,8 @@ export async function handleSessionHistoryHttpRequest(
   }
   const { cfg } = authResult;
 
-  const target = resolveGatewaySessionStoreTarget({ cfg, key: sessionKey });
-  const store = loadSessionStore(target.storePath);
-  const entry = resolveFreshestSessionEntryFromStoreKeys(store, target.storeKeys);
+  const target = resolveGatewaySessionStoreTargetWithStore({ cfg, key: sessionKey });
+  const entry = resolveFreshestSessionEntryFromStoreKeys(target.store, target.storeKeys);
   if (!entry?.sessionId) {
     sendJson(res, 404, {
       ok: false,
@@ -156,22 +146,39 @@ export async function handleSessionHistoryHttpRequest(
   const boundedSnapshot =
     cursor === undefined && typeof limit === "number"
       ? await readRecentSessionMessagesWithStatsAsync(
-          entry.sessionId,
-          target.storePath,
-          entry.sessionFile,
-          resolveSessionHistoryTailReadOptions(limit),
+          {
+            agentId: target.agentId,
+            sessionEntry: entry,
+            sessionId: entry.sessionId,
+            sessionKey: target.canonicalKey,
+            storePath: target.storePath,
+          },
+          {
+            ...resolveSessionHistoryTailReadOptions(limit),
+            allowResetArchiveFallback: true,
+          },
         )
       : undefined;
   // Cursor reads still need an arbitrary historical window. The common first
   // page path is bounded above so `limit=1` cannot materialize huge transcripts.
-  const rawSnapshot =
-    boundedSnapshot?.messages ??
-    (entry?.sessionId
-      ? await readSessionMessagesAsync(entry.sessionId, target.storePath, entry.sessionFile, {
-          mode: "full",
-          reason: "session history cursor pagination",
-        })
-      : []);
+  const fullSnapshot =
+    boundedSnapshot === undefined && entry?.sessionId
+      ? await readSessionMessagesWithSourceAsync(
+          {
+            agentId: target.agentId,
+            sessionEntry: entry,
+            sessionId: entry.sessionId,
+            sessionKey: target.canonicalKey,
+            storePath: target.storePath,
+          },
+          {
+            mode: "full",
+            reason: "session history cursor pagination",
+            allowResetArchiveFallback: true,
+          },
+        )
+      : undefined;
+  const rawSnapshot = boundedSnapshot?.messages ?? fullSnapshot?.messages ?? [];
   const historySnapshot = buildSessionHistorySnapshot({
     rawMessages: rawSnapshot,
     maxChars: effectiveMaxChars,
@@ -198,7 +205,7 @@ export async function handleSessionHistoryHttpRequest(
           entry.sessionFile,
           target.agentId,
         )
-          .map((candidate) => canonicalizePath(candidate))
+          .map((candidate) => resolveTranscriptPathForComparison(candidate))
           .filter((candidate): candidate is string => typeof candidate === "string"),
       )
     : new Set<string>();
@@ -206,13 +213,16 @@ export async function handleSessionHistoryHttpRequest(
   let sentHistory = history;
   const sseState = SessionHistorySseState.fromRawSnapshot({
     target: {
+      agentId: target.agentId,
+      sessionEntry: entry,
       sessionId: entry.sessionId,
+      sessionKey: target.canonicalKey,
       storePath: target.storePath,
-      sessionFile: entry.sessionFile,
     },
     rawMessages: rawSnapshot,
     rawTranscriptSeq: boundedSnapshot?.totalMessages,
     totalRawMessages: boundedSnapshot?.totalMessages,
+    transcriptPath: boundedSnapshot?.transcriptPath ?? fullSnapshot?.transcriptPath,
     maxChars: effectiveMaxChars,
     limit,
     cursor,
@@ -297,17 +307,20 @@ export async function handleSessionHistoryHttpRequest(
     });
   }, 15_000);
 
-  const unsubscribe: (() => void) | undefined = onSessionTranscriptUpdate((update) => {
+  const unsubscribe: (() => void) | undefined = onInternalSessionTranscriptUpdate((update) => {
     // Filter to candidate sessions synchronously before enqueueing any async
-    // work. `onSessionTranscriptUpdate` is a global fan-out listener, so every
+    // work. Transcript updates use a global fan-out listener, so every
     // transcript write in the gateway would otherwise append a Promise-chain
     // entry capturing `update.message` to every open SSE stream's queue —
     // O(streams × updates) for busy deployments.
     if (!entry?.sessionId) {
       return;
     }
-    const updatePath = canonicalizePath(update.sessionFile);
-    if (!updatePath || !transcriptCandidates.has(updatePath)) {
+    const updateMatchesIdentity =
+      update.target?.sessionId === entry.sessionId &&
+      normalizeAgentId(update.target.agentId) === normalizeAgentId(target.agentId);
+    const updatePath = resolveTranscriptPathForComparison(update.sessionFile);
+    if (!updateMatchesIdentity && (!updatePath || !transcriptCandidates.has(updatePath))) {
       return;
     }
     queueStreamWork(async () => {
@@ -320,6 +333,14 @@ export async function handleSessionHistoryHttpRequest(
       }
       if (update.message !== undefined) {
         if (limit === undefined && cursor === undefined) {
+          if (sseState.shouldRefreshForTranscriptPath(updatePath)) {
+            sentHistory = await sseState.refreshAsync();
+            sseWrite(res, "history", {
+              sessionKey: target.canonicalKey,
+              ...sentHistory,
+            });
+            return;
+          }
           const nextEvent = sseState.appendInlineMessage({
             message: update.message,
             messageId: update.messageId,
