@@ -267,6 +267,15 @@ export default definePluginEntry({
             blockReason: "This action is not permitted for your current package.",
           };
         }
+        if (decision.decision === "redirect_lane") {
+          // Gap 1.3: the Core redirected this Act to another runtime lane.
+          // Lane workers (7A/7B/Edge) are not wired yet, so surface a replan
+          // signal instead of executing here.
+          return {
+            block: true,
+            blockReason: `The Deterministic Core redirected this action to lane ${decision.redirectLane} — replan and route the task through that lane instead of executing it here.`,
+          };
+        }
         if (decision.decision === "require_approval") {
           // Policy Matrix Engine routed this hold to the Paperclip board (②).
           if (decision.responderSurface === "paperclip_board") {

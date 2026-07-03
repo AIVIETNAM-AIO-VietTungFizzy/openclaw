@@ -9,7 +9,7 @@
 import { randomUUID } from "node:crypto";
 import { buildEnforcePayload } from "./session-envelope.js";
 
-export type EnforceDecision = "allow" | "deny" | "require_approval";
+export type EnforceDecision = "allow" | "deny" | "require_approval" | "redirect_lane";
 export type ResponderSurface = "openclaw_hold" | "paperclip_board";
 
 export interface EnforceResult {
@@ -23,6 +23,8 @@ export interface EnforceResult {
   approvalRequestId?: string;
   paperclipApprovalType?: string | null;
   escalationRole?: string | null;
+  /** Target runtime lane on a redirect_lane decision (gap 1.3 Act gate). */
+  redirectLane?: string;
 }
 
 export interface PolicyClientConfig {
@@ -76,6 +78,7 @@ interface EnforceResponseBody {
   trace_id?: string;
   approval_request_id?: string;
   responder_surface?: string;
+  redirect_lane?: string;
   routing?: {
     rule_id?: string | null;
     paperclip_approval_type?: string | null;
@@ -103,6 +106,15 @@ export function createPolicyClient(cfg: PolicyClientConfig): PolicyClient {
   function mapDecision(body: EnforceResponseBody): EnforceResult {
     const decision = body.decision;
     if (decision === "allow") return { decision: "allow" };
+    if (decision === "redirect_lane" && body.redirect_lane) {
+      // SPA replan signal (gap 1.3): the Core redirected this Act to another
+      // runtime lane. Never cached — the caller must replan, not retry.
+      return {
+        decision: "redirect_lane",
+        redirectLane: body.redirect_lane,
+        traceId: body.trace_id,
+      };
+    }
     if (decision === "require_approval") {
       return {
         decision: "require_approval",
@@ -192,8 +204,9 @@ export function createPolicyClient(cfg: PolicyClientConfig): PolicyClient {
 
         const body = (await res.json()) as EnforceResponseBody;
         const result = mapDecision(body);
-        // Cache only stable allow/deny outcomes, not approvals.
-        if (result.decision !== "require_approval") {
+        // Cache only stable allow/deny outcomes — approvals and lane
+        // redirects must re-consult the Core every time.
+        if (result.decision === "allow" || result.decision === "deny") {
           cache.set(key, { result, expires: Date.now() + ttl });
         }
         return result;
