@@ -322,6 +322,31 @@ describe("paperclip-contract trusted policy: control-plane enforce()", () => {
     }
   });
 
+  it("fail-open (failMode=allow) still BLOCKS dangerous tools on Core outage", async () => {
+    // Unreachable enforce URL + failMode "allow": benign tools fail open, but
+    // the dangerous set (exec/browser/nodes/process) must never execute
+    // without an explicit Core allow (gap 1.3 acceptance).
+    const { policies } = register(
+      policyConfig("http://127.0.0.1:1/api/core/enforce", { failMode: "allow" }),
+    );
+    const execDecision = await policies[0].evaluate(evt("exec"));
+    expect(execDecision).toMatchObject({ block: true });
+    expect(String((execDecision as { blockReason?: string }).blockReason)).toContain("exec");
+    const benignDecision = await policies[0].evaluate(evt("web_fetch"));
+    expect(benignDecision).not.toMatchObject({ block: true });
+  });
+
+  it("explicit Core allow still permits a dangerous tool", async () => {
+    const enf = startMockEnforce(() => ({ decision: "allow" }));
+    try {
+      const { policies } = register(policyConfig(enf.url));
+      const decision = await policies[0].evaluate(evt("exec"));
+      expect(decision).not.toMatchObject({ block: true });
+    } finally {
+      await enf.close();
+    }
+  });
+
   it("allow → passes a non-facade tool through", async () => {
     const enf = startMockEnforce(() => ({ decision: "allow" }));
     try {

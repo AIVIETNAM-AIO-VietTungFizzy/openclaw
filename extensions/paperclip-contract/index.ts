@@ -3,7 +3,12 @@ import { definePluginEntry, type AnyAgentTool } from "openclaw/plugin-sdk/plugin
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-runtime";
 import { Type } from "typebox";
 import { createFacade, type FacadeConfig } from "./src/facade.js";
-import { classifyToolCall, classifyOperationRisk, resolveApprovalRouting } from "./src/guard.js";
+import {
+  classifyToolCall,
+  classifyOperationRisk,
+  resolveApprovalRouting,
+  DANGEROUS_RAW_TOOLS,
+} from "./src/guard.js";
 import { createPaperclipBoardApproval } from "./src/paperclip-approval-client.js";
 import { createPolicyClient, type PolicyClient } from "./src/policy-client.js";
 
@@ -265,6 +270,19 @@ export default definePluginEntry({
           return {
             block: true,
             blockReason: "This action is not permitted for your current package.",
+          };
+        }
+        if (
+          decision.decision === "allow" &&
+          decision.fallback &&
+          DANGEROUS_RAW_TOOLS.includes(event.toolName)
+        ) {
+          // Fail-open only softens BENIGN tools. A fallback allow is not an
+          // explicit Core decision, and the dangerous set never executes
+          // without one (gap 1.3 acceptance).
+          return {
+            block: true,
+            blockReason: `'${event.toolName}' requires an explicit Core allow and the control plane is unreachable (fail-open applies to benign tools only).`,
           };
         }
         if (decision.decision === "redirect_lane") {

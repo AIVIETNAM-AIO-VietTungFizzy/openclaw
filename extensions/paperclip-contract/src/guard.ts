@@ -68,6 +68,13 @@ export type GuardAction =
 
 // ─── Guard Classifier ─────────────────────────────────────────────────────────
 
+/**
+ * Tools that must NEVER execute without an explicit Core allow (gap 1.3):
+ * blocked by the static guard in legacy mode, and blocked in governed mode
+ * whenever the decision is a fail-open fallback rather than a real Core allow.
+ */
+export const DANGEROUS_RAW_TOOLS = ["exec", "process", "browser", "nodes"];
+
 export function classifyToolCall(toolName: string): GuardAction {
   // Block raw sub-tool bypass attempts
   const rawSubTools = [
@@ -75,10 +82,7 @@ export function classifyToolCall(toolName: string): GuardAction {
     "paperclip.work_item_detail",
     "paperclip.raise_blocker",
     "paperclip.complete_work_item",
-    "exec",
-    "process",
-    "browser",
-    "nodes",
+    ...DANGEROUS_RAW_TOOLS,
   ];
 
   if (rawSubTools.includes(toolName)) {

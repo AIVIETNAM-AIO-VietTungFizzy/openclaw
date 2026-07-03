@@ -25,6 +25,8 @@ export interface EnforceResult {
   escalationRole?: string | null;
   /** Target runtime lane on a redirect_lane decision (gap 1.3 Act gate). */
   redirectLane?: string;
+  /** True when this result is a fail-mode fallback, NOT an explicit Core decision. */
+  fallback?: boolean;
 }
 
 export interface PolicyClientConfig {
@@ -100,7 +102,12 @@ export function createPolicyClient(cfg: PolicyClientConfig): PolicyClient {
   const cache = new Map<string, { result: EnforceResult; expires: number }>();
 
   function failClosed(reason: string): EnforceResult {
-    return cfg.failMode === "allow" ? { decision: "allow", reason } : { decision: "deny", reason };
+    // fallback marks the result as synthesized (Core unreachable/errored) so
+    // callers can distinguish it from an explicit Core allow — dangerous tools
+    // must never run on a fallback allow (gap 1.3).
+    return cfg.failMode === "allow"
+      ? { decision: "allow", reason, fallback: true }
+      : { decision: "deny", reason, fallback: true };
   }
 
   function mapDecision(body: EnforceResponseBody): EnforceResult {
