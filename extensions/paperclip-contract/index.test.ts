@@ -300,6 +300,28 @@ describe("paperclip-contract trusted policy: control-plane enforce()", () => {
     }
   });
 
+  it("redirect_lane → blocks with a replan-to-lane reason and does NOT cache", async () => {
+    let calls = 0;
+    const enf = startMockEnforce(() => {
+      calls += 1;
+      return { decision: "redirect_lane", redirect_lane: "7A", rule_id: "rule-1" };
+    });
+    try {
+      // A real cache TTL (policyConfig default disables it) so this test
+      // proves redirect_lane specifically is exempt from caching.
+      const { policies } = register(policyConfig(enf.url, { cacheTtlMs: 60_000 }));
+      const decision = await policies[0].evaluate(evt("web_fetch"));
+      expect(decision).toMatchObject({ block: true });
+      expect(String((decision as { blockReason?: string }).blockReason)).toContain("7A");
+      // redirect_lane is a replan signal — it must never be served from the
+      // allow/deny cache; a second evaluate must hit enforce again.
+      await policies[0].evaluate(evt("web_fetch"));
+      expect(calls).toBe(2);
+    } finally {
+      await enf.close();
+    }
+  });
+
   it("allow → passes a non-facade tool through", async () => {
     const enf = startMockEnforce(() => ({ decision: "allow" }));
     try {
