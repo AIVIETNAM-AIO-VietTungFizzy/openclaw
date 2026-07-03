@@ -81,3 +81,42 @@ describe("AgentParamsSchema", () => {
     expect(Value.Check(AgentParamsSchema, params)).toBe(false);
   });
 });
+
+describe("AgentParamsSchema — paperclip dispatch payload (gap 1.5)", () => {
+  const base = {
+    message: "Work on issue-9.",
+    sessionKey: "agent:main:paperclip:issue:issue-9",
+    idempotencyKey: "run-777",
+  };
+
+  it("accepts an optional paperclip payload object (Layer 4B dispatch context)", () => {
+    const params = {
+      ...base,
+      paperclip: {
+        runId: "run-777",
+        issueId: "issue-9",
+        envelope: {
+          trace_id: "run-777",
+          tenant_id: "ten-1",
+          company_id: "co-1",
+          employee_id: "emp-1",
+          package: "L2",
+          role: "finance_staff",
+          locale: "vi-VN",
+          timezone: "Asia/Ho_Chi_Minh",
+          issue_id: "issue-9",
+          task_id: null,
+        },
+      },
+    };
+    expect(Value.Check(AgentParamsSchema, params)).toBe(true);
+  });
+
+  it("still accepts requests without a paperclip payload (back-compat)", () => {
+    expect(Value.Check(AgentParamsSchema, base)).toBe(true);
+  });
+
+  it("rejects a non-object paperclip payload", () => {
+    expect(Value.Check(AgentParamsSchema, { ...base, paperclip: "yes" })).toBe(false);
+  });
+});

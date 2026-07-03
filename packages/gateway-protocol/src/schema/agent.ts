@@ -234,6 +234,11 @@ export const AgentParamsSchema = Type.Object(
     voiceWakeTrigger: Type.Optional(Type.String()),
     idempotencyKey: NonEmptyString,
     label: Type.Optional(SessionLabelString),
+    // Paperclip Layer 4B dispatch context (gap 1.5): the openclaw_gateway
+    // adapter attaches run/issue identifiers plus the V24 session envelope so
+    // the run executes with the dispatched per-employee identity. Opaque to
+    // the protocol - the agent handler and paperclip-contract interpret it.
+    paperclip: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   },
   { additionalProperties: false },
 );
