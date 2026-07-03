@@ -347,9 +347,12 @@ export default definePluginEntry({
 
         // Allowed. If a board hold was satisfied (approved → replayed), clear it.
         if (hold) boardHolds.delete(holdKey);
+        // Surface the Core's authorization envelope (gap 1.3) so downstream
+        // consumers (agent loop / audit) can honor allowed_tools / max_cost.
+        const passResult = decision.constraints ? { constraints: decision.constraints } : {};
         // The facade tool additionally carries operation-level risk.
-        if (event.toolName !== FACADE_TOOL_NAME) return {};
-        return facadeOperationDecision(event);
+        if (event.toolName !== FACADE_TOOL_NAME) return passResult;
+        return { ...facadeOperationDecision(event), ...passResult };
       },
     });
   },

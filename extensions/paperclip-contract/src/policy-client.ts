@@ -27,6 +27,8 @@ export interface EnforceResult {
   redirectLane?: string;
   /** True when this result is a fail-mode fallback, NOT an explicit Core decision. */
   fallback?: boolean;
+  /** Gap 1.3: Core-issued authorization constraints attached to an allow. */
+  constraints?: { allowed_tools?: string[]; max_cost_usd?: number };
 }
 
 export interface PolicyClientConfig {
@@ -81,6 +83,7 @@ interface EnforceResponseBody {
   approval_request_id?: string;
   responder_surface?: string;
   redirect_lane?: string;
+  constraints?: { allowed_tools?: string[]; max_cost_usd?: number };
   routing?: {
     rule_id?: string | null;
     paperclip_approval_type?: string | null;
@@ -112,7 +115,9 @@ export function createPolicyClient(cfg: PolicyClientConfig): PolicyClient {
 
   function mapDecision(body: EnforceResponseBody): EnforceResult {
     const decision = body.decision;
-    if (decision === "allow") return { decision: "allow" };
+    if (decision === "allow") {
+      return { decision: "allow", ...(body.constraints ? { constraints: body.constraints } : {}) };
+    }
     if (decision === "redirect_lane" && body.redirect_lane) {
       // SPA replan signal (gap 1.3): the Core redirected this Act to another
       // runtime lane. Never cached — the caller must replan, not retry.

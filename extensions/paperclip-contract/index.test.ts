@@ -347,6 +347,26 @@ describe("paperclip-contract trusted policy: control-plane enforce()", () => {
     }
   });
 
+  it("allow constraints from the Core are surfaced on the decision result", async () => {
+    const enf = startMockEnforce(() => ({
+      decision: "allow",
+      constraints: { allowed_tools: ["web_fetch"], max_cost_usd: 0.5 },
+    }));
+    try {
+      const { policies } = register(policyConfig(enf.url));
+      const decision = await policies[0].evaluate(evt("web_fetch"));
+      expect(decision).not.toMatchObject({ block: true });
+      // The authorization envelope is attached for downstream consumers
+      // (agent loop / audit) even though multi-step enforcement lands with 6.1.
+      expect((decision as { constraints?: unknown }).constraints).toEqual({
+        allowed_tools: ["web_fetch"],
+        max_cost_usd: 0.5,
+      });
+    } finally {
+      await enf.close();
+    }
+  });
+
   it("allow → passes a non-facade tool through", async () => {
     const enf = startMockEnforce(() => ({ decision: "allow" }));
     try {
