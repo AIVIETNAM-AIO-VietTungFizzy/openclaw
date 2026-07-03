@@ -253,6 +253,14 @@ export default definePluginEntry({
     } as AnyAgentTool);
 
     // ── Trusted tool policy: runs BEFORE all ordinary before_tool_call hooks ──
+    // Gap 1.5: the gateway agent handler persists Paperclip dispatch payloads
+    // into this session-extension namespace (host-side patch requires the
+    // extension to be registered). readDispatchedIdentity() consumes it.
+    api.registerSessionExtension?.({
+      namespace: "dispatch",
+      description: "Paperclip Layer 4B dispatch payload (V24 session envelope) for the active run.",
+    });
+
     api.registerTrustedToolPolicy({
       id: "paperclip-contract-policy",
       description:

@@ -95,6 +95,8 @@ import {
 } from "../../infra/voicewake-routing.js";
 import type { PromptImageOrderEntry } from "../../media/prompt-image-order.js";
 import type { PluginHookSessionEndReason } from "../../plugins/hook-types.js";
+import type { PluginJsonValue } from "../../plugins/host-hook-json.js";
+import { patchPluginSessionExtension } from "../../plugins/host-hook-state.js";
 import {
   classifySessionKeyShape,
   isAcpSessionKey,
@@ -159,6 +161,7 @@ import {
 } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
 import { waitForAgentJob } from "./agent-job.js";
+import { persistPaperclipDispatch } from "./agent-paperclip-dispatch.js";
 import {
   readTerminalSnapshotFromGatewayDedupe,
   setGatewayDedupeEntry,
@@ -1094,6 +1097,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       cleanupBundleMcpOnRunEnd?: boolean;
       label?: string;
       inputProvenance?: InputProvenance;
+      paperclip?: Record<string, unknown>;
       workspaceDir?: string;
       voiceWakeTrigger?: string;
     };
@@ -2573,6 +2577,23 @@ export const agentHandlers: GatewayRequestHandlers = {
           );
         }
       }
+
+      // Gap 1.5: persist the Paperclip dispatch payload for this session so
+      // the paperclip-contract trusted policy enforces the run with the
+      // DISPATCHED per-employee identity. Best-effort — never fails the run.
+      await persistPaperclipDispatch({
+        paperclip: request.paperclip,
+        sessionKey: resolvedSessionKey,
+        patch: (args) =>
+          patchPluginSessionExtension({
+            cfg,
+            sessionKey: args.sessionKey,
+            pluginId: args.pluginId,
+            namespace: args.namespace,
+            value: args.value as PluginJsonValue,
+          }),
+        warn: (message) => context.logGateway.warn(message),
+      });
 
       const resolvedThreadId = explicitThreadId ?? deliveryPlan.resolvedThreadId;
       // Confirmed only when the caller is the trusted in-process backend ACP

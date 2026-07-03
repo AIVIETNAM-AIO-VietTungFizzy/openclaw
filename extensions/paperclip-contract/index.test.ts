@@ -424,6 +424,21 @@ describe("paperclip-contract trusted policy: control-plane enforce()", () => {
     }
   });
 
+  it("registers the dispatch session extension so the host can persist dispatch payloads (gap 1.5)", () => {
+    const extensions: Array<{ namespace: string }> = [];
+    paperclipPlugin.register?.(
+      createTestPluginApi({
+        id: "paperclip-contract",
+        name: "Paperclip Contract",
+        config: {},
+        registerTool: () => {},
+        registerTrustedToolPolicy: () => {},
+        registerSessionExtension: (ext: { namespace: string }) => extensions.push(ext),
+      } as never),
+    );
+    expect(extensions.some((ext) => ext.namespace === "dispatch")).toBe(true);
+  });
+
   it("allow → passes a non-facade tool through", async () => {
     const enf = startMockEnforce(() => ({ decision: "allow" }));
     try {
