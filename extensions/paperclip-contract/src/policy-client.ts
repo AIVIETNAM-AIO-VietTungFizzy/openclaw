@@ -7,6 +7,7 @@
 // without a per-call network round-trip on every tool invocation.
 
 import { randomUUID } from "node:crypto";
+import { buildEnforcePayload } from "./session-envelope.js";
 
 export type EnforceDecision = "allow" | "deny" | "require_approval";
 export type ResponderSurface = "openclaw_hold" | "paperclip_board";
@@ -39,6 +40,15 @@ export interface PolicyClientConfig {
   timeoutMs?: number;
   /** How long an allow/deny decision is cached per (package, tool). Default 5s. */
   cacheTtlMs?: number;
+  // ── V24 session-envelope identity (gaps item 1.2) — all optional; static
+  // per-runtime values sourced from plugin config/env. Per-call values live on
+  // EnforceToolInput. channel/agent default in buildEnforcePayload.
+  companyId?: string;
+  locale?: string;
+  timezone?: string;
+  runtimeLane?: string;
+  channelUsed?: string;
+  agentUsed?: string;
 }
 
 export interface EnforceToolInput {
@@ -50,6 +60,11 @@ export interface EnforceToolInput {
   // the surface-② resume so an approved board hold re-attempts as allow). Omit
   // for normal calls — a fresh uuid is generated.
   sessionId?: string;
+  // ── V24 per-call envelope fields (gaps item 1.2) ──
+  traceId?: string;
+  estimatedCostUsd?: number;
+  amount?: number;
+  currency?: string;
 }
 
 interface EnforceResponseBody {
@@ -115,6 +130,44 @@ export function createPolicyClient(cfg: PolicyClientConfig): PolicyClient {
         if (cached && cached.expires > Date.now()) return cached.result;
       }
 
+      // Full V24 session envelope; an invalid/missing envelope throws here and
+      // maps to the fail mode — never send a partial identity to enforce.
+      let payload;
+      const traceId = input.traceId ?? uuid();
+      try {
+        payload = buildEnforcePayload(
+          {
+            tenantId: input.tenantId,
+            employeeId: input.employeeId,
+            package: input.package,
+            role: cfg.role,
+            callerService: cfg.callerService,
+            callerVersion: cfg.callerVersion,
+            companyId: cfg.companyId,
+            locale: cfg.locale,
+            timezone: cfg.timezone,
+            runtimeLane: cfg.runtimeLane,
+            channelUsed: cfg.channelUsed,
+            agentUsed: cfg.agentUsed,
+          },
+          {
+            toolId: input.toolId,
+            // Unique per call so the control-plane idempotency window never
+            // collides distinct tool evaluations — UNLESS the caller reuses a
+            // prior session_id to trigger the surface-② approval replay.
+            sessionId: input.sessionId ?? uuid(),
+            traceId,
+            estimatedCostUsd: input.estimatedCostUsd,
+            amount: input.amount,
+            currency: input.currency,
+          },
+        );
+      } catch (err) {
+        return failClosed(
+          err instanceof Error ? `invalid session envelope: ${err.message}` : String(err),
+        );
+      }
+
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -125,22 +178,9 @@ export function createPolicyClient(cfg: PolicyClientConfig): PolicyClient {
             "X-Service-Token": cfg.serviceToken,
             "X-Caller-Service": cfg.callerService,
             "X-Caller-Version": cfg.callerVersion,
-            "X-Trace-Id": uuid(),
+            "X-Trace-Id": traceId,
           },
-          body: JSON.stringify({
-            tenant_id: input.tenantId,
-            employee_id: input.employeeId,
-            package: input.package,
-            role: cfg.role,
-            caller_version: cfg.callerVersion,
-            intent_kind: "tool",
-            tool_id: input.toolId,
-            // Unique per call so the control-plane idempotency window never
-            // collides distinct tool evaluations — UNLESS the caller reuses a
-            // prior session_id to trigger the surface-② approval replay.
-            session_id: input.sessionId ?? uuid(),
-            caller_service: cfg.callerService,
-          }),
+          body: JSON.stringify(payload),
           signal: controller.signal,
         });
 
