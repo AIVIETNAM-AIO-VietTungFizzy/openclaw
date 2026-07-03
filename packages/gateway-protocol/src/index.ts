@@ -369,6 +369,10 @@ import {
   SkillsDetailResultSchema,
   type SkillsInstallParams,
   SkillsInstallParamsSchema,
+  type SkillsInstallFromRCParams,
+  SkillsInstallFromRCParamsSchema,
+  type SkillsUninstallFromRCParams,
+  SkillsUninstallFromRCParamsSchema,
   type SkillsProposalActionParams,
   SkillsProposalActionParamsSchema,
   type SkillsProposalApplyResult,
@@ -746,6 +750,10 @@ export const validateToolsInvokeParams = lazyCompile<ToolsInvokeParams>(ToolsInv
 export const validateSkillsBinsParams = lazyCompile<SkillsBinsParams>(SkillsBinsParamsSchema);
 export const validateSkillsInstallParams =
   lazyCompile<SkillsInstallParams>(SkillsInstallParamsSchema);
+export const validateSkillsInstallFromRCParams =
+  lazyCompile<SkillsInstallFromRCParams>(SkillsInstallFromRCParamsSchema);
+export const validateSkillsUninstallFromRCParams =
+  lazyCompile<SkillsUninstallFromRCParams>(SkillsUninstallFromRCParamsSchema);
 export const validateSkillsUploadBeginParams = lazyCompile<SkillsUploadBeginParams>(
   SkillsUploadBeginParamsSchema,
 );
@@ -1076,6 +1084,8 @@ export {
   ToolsEffectiveParamsSchema,
   ToolsInvokeParamsSchema,
   SkillsInstallParamsSchema,
+  SkillsInstallFromRCParamsSchema,
+  SkillsUninstallFromRCParamsSchema,
   SkillsSearchParamsSchema,
   SkillsSearchResultSchema,
   SkillsDetailParamsSchema,
@@ -1259,6 +1269,8 @@ export type {
   SkillsUploadChunkParams,
   SkillsUploadCommitParams,
   SkillsInstallParams,
+  SkillsInstallFromRCParams,
+  SkillsUninstallFromRCParams,
   SkillsUpdateParams,
   EnvironmentStatus,
   EnvironmentSummary,

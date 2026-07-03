@@ -316,6 +316,26 @@ export const SkillsInstallParamsSchema = Type.Union([
   ),
 ]);
 
+export const SkillsInstallFromRCParamsSchema = Type.Object(
+  {
+    slug: NonEmptyString,
+    agentId: NonEmptyString,
+    downloadUrl: NonEmptyString,
+    downloadToken: NonEmptyString,
+    callbackUrl: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
+export const SkillsUninstallFromRCParamsSchema = Type.Object(
+  {
+    slug: NonEmptyString,
+    callbackUrl: NonEmptyString,
+    callbackToken: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
 export const SkillsUpdateParamsSchema = Type.Union([
   Type.Object(
     {

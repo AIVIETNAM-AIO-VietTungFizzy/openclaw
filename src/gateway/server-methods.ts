@@ -438,6 +438,8 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
       "skills.securityVerdicts",
       "skills.skillCard",
       "skills.install",
+      "skills.installFromRC",
+      "skills.uninstallFromRC",
       "skills.update",
       "skills.proposals.list",
       "skills.proposals.inspect",

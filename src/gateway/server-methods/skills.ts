@@ -16,6 +16,8 @@ import {
   validateSkillsSkillCardParams,
   validateSkillsStatusParams,
   validateSkillsUpdateParams,
+  validateSkillsInstallFromRCParams,
+  validateSkillsUninstallFromRCParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import {
   listAgentIds,
@@ -38,6 +40,7 @@ import {
   updateSkillsFromClawHub,
 } from "../../skills/lifecycle/clawhub.js";
 import { installSkill } from "../../skills/lifecycle/install.js";
+import { installSkillFromRc, uninstallSkillFromRc } from "../../skills/lifecycle/rc-install.js";
 import { installUploadedSkillArchive } from "../../skills/lifecycle/upload-install.js";
 import { loadWorkspaceSkillEntries } from "../../skills/loading/workspace.js";
 import { getRemoteSkillEligibility } from "../../skills/runtime/remote.js";
@@ -508,6 +511,47 @@ export const skillsHandlers: GatewayRequestHandlers = {
       result,
       result.ok ? undefined : errorShape(ErrorCodes.UNAVAILABLE, result.message),
     );
+  },
+  "skills.installFromRC": async ({ params, respond, context }) => {
+    if (!assertValidParams(params, validateSkillsInstallFromRCParams, "skills.installFromRC", respond)) {
+      return;
+    }
+    const p = params as {
+      slug: string;
+      agentId: string;
+      downloadUrl: string;
+      downloadToken: string;
+      callbackUrl: string;
+    };
+    const cfg = context.getRuntimeConfig();
+    // Fire and forget — return immediately, callback reports result
+    installSkillFromRc({
+      config: cfg,
+      slug: p.slug,
+      agentId: p.agentId,
+      downloadUrl: p.downloadUrl,
+      downloadToken: p.downloadToken,
+      callbackUrl: p.callbackUrl,
+    }).catch(() => {});
+    respond(true, { accepted: true, message: `Installation of ${p.slug} started` });
+  },
+  "skills.uninstallFromRC": async ({ params, respond, context }) => {
+    if (!assertValidParams(params, validateSkillsUninstallFromRCParams, "skills.uninstallFromRC", respond)) {
+      return;
+    }
+    const p = params as {
+      slug: string;
+      callbackUrl: string;
+      callbackToken: string;
+    };
+    const cfg = context.getRuntimeConfig();
+    uninstallSkillFromRc({
+      config: cfg,
+      slug: p.slug,
+      callbackUrl: p.callbackUrl,
+      callbackToken: p.callbackToken,
+    }).catch(() => {});
+    respond(true, { accepted: true, message: `Uninstall of ${p.slug} started` });
   },
   "skills.update": async ({ params, respond, context }) => {
     if (!assertValidParams(params, validateSkillsUpdateParams, "skills.update", respond)) {

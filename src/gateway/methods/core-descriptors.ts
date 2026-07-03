@@ -118,6 +118,8 @@ export const CORE_GATEWAY_METHOD_SPECS: readonly CoreGatewayMethodSpec[] = [
   { name: "skills.upload.chunk", scope: "operator.admin" },
   { name: "skills.upload.commit", scope: "operator.admin" },
   { name: "skills.install", scope: "operator.admin" },
+  { name: "skills.installFromRC", scope: "operator.admin" },
+  { name: "skills.uninstallFromRC", scope: "operator.admin" },
   { name: "skills.update", scope: "operator.admin" },
   { name: "skills.proposals.list", scope: "operator.read" },
   { name: "skills.proposals.inspect", scope: "operator.read" },
