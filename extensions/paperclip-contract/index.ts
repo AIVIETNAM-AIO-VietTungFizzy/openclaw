@@ -92,6 +92,14 @@ function readConfig(api: OpenClawPluginApi): ResolvedConfig {
       role,
       failMode,
       cacheTtlMs,
+      // V24 session-envelope identity (gaps item 1.2) — optional; the envelope
+      // builder fills channel/agent defaults when unset.
+      companyId: str(cfg.companyId) ?? process.env.PAPERCLIP_COMPANY_ID,
+      locale: str(cfg.locale) ?? process.env.PAPERCLIP_LOCALE,
+      timezone: str(cfg.timezone) ?? process.env.PAPERCLIP_TIMEZONE,
+      runtimeLane: str(cfg.runtimeLane) ?? process.env.PAPERCLIP_RUNTIME_LANE,
+      channelUsed: str(cfg.channelUsed) ?? process.env.PAPERCLIP_CHANNEL_USED,
+      agentUsed: str(cfg.agentUsed) ?? process.env.PAPERCLIP_AGENT_USED,
     });
     policy = { client, identity: { tenantId, employeeId, package: pkg } };
   }

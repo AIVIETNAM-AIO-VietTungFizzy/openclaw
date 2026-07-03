@@ -264,6 +264,42 @@ describe("paperclip-contract trusted policy: control-plane enforce()", () => {
     }
   });
 
+  it("sends the full V24 session envelope in the enforce payload", async () => {
+    const enf = startMockEnforce(() => ({ decision: "allow" }));
+    try {
+      const { policies } = register(
+        policyConfig(enf.url, {
+          companyId: "company-acme-001",
+          locale: "vi-VN",
+          timezone: "Asia/Ho_Chi_Minh",
+          runtimeLane: "7A",
+        }),
+      );
+      await policies[0].evaluate(evt("web_fetch"));
+      const body = enf.lastBody()!;
+      expect(body).toMatchObject({
+        tenant_id: "ten-1",
+        employee_id: "emp-1",
+        package: "L1",
+        intent_kind: "tool",
+        tool_id: "web_fetch",
+        caller_service: "openclaw",
+        company_id: "company-acme-001",
+        locale: "vi-VN",
+        timezone: "Asia/Ho_Chi_Minh",
+        runtime_lane: "7A",
+        channel_used: "openclaw_gateway",
+        agent_used: "openclaw:paperclip",
+      });
+      // trace ids are minted per call and must be present + linked
+      expect(typeof body.trace_id).toBe("string");
+      expect(String(body.trace_root)).toContain("ten-1");
+      expect(typeof body.session_id).toBe("string");
+    } finally {
+      await enf.close();
+    }
+  });
+
   it("allow → passes a non-facade tool through", async () => {
     const enf = startMockEnforce(() => ({ decision: "allow" }));
     try {
