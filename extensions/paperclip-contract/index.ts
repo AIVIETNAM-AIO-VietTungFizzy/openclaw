@@ -181,6 +181,37 @@ function facadeOperationDecision(event: { params?: unknown }): BeforeToolCallRes
   return {};
 }
 
+/**
+ * Dispatched per-run identity (gap 1.5): the gateway agent handler stores the
+ * Paperclip dispatch payload as a session extension under the "dispatch"
+ * namespace; its envelope re-points enforcement at the DISPATCHED employee.
+ * SECURITY GATE: an envelope for another tenant is ignored (and logged) — a
+ * dispatch must never re-point enforcement across tenants. Only employee_id
+ * and trace_id are honored; package/role stay the container's provisioned
+ * identity (a dispatch must not elevate privileges).
+ */
+function readDispatchedIdentity(
+  ctx: { getSessionExtension?: (namespace: string) => unknown } | undefined,
+  configuredTenantId: string,
+): { employeeId?: string; traceId?: string } | null {
+  const raw = ctx?.getSessionExtension?.("dispatch");
+  if (!raw || typeof raw !== "object") return null;
+  const envelope = (raw as { envelope?: unknown }).envelope;
+  if (!envelope || typeof envelope !== "object") return null;
+  const env = envelope as Record<string, unknown>;
+  const tenantId = typeof env.tenant_id === "string" ? env.tenant_id : null;
+  if (tenantId !== configuredTenantId) {
+    if (tenantId) {
+      console.warn(
+        `[paperclip-contract] ignoring dispatched envelope for foreign tenant ${tenantId}`,
+      );
+    }
+    return null;
+  }
+  const str = (v: unknown) => (typeof v === "string" && v.length > 0 ? v : undefined);
+  return { employeeId: str(env.employee_id), traceId: str(env.trace_id) };
+}
+
 /** Static fallback used when the control-plane Policy Guard is not configured. */
 function legacyEvaluate(event: { toolName: string; params?: unknown }): BeforeToolCallResult {
   const toolClass = classifyToolCall(event.toolName);
@@ -226,7 +257,7 @@ export default definePluginEntry({
       id: "paperclip-contract-policy",
       description:
         "Delegates tool allow/deny/approval to the control-plane Policy Guard per package; still applies operation-level contract risk for the Paperclip facade. Falls back to a static guard when unconfigured.",
-      async evaluate(event): Promise<BeforeToolCallResult> {
+      async evaluate(event, ctx): Promise<BeforeToolCallResult> {
         // Bundle-mcp aggregated tools are governed at the LiteLLM /mcp chokepoint
         // (with their canonical connector id); re-enforcing them here under the
         // OpenClaw display name yields a false "not permitted for your package".
@@ -236,7 +267,11 @@ export default definePluginEntry({
         // No control plane configured → static behavior (keeps local/manual runs working).
         if (!policy) return legacyEvaluate(event);
 
-        const holdKey = `${policy.identity.tenantId}:${policy.identity.employeeId}:${event.toolName}`;
+        // Gap 1.5: a Paperclip dispatch re-points enforcement at the dispatched
+        // employee (same tenant only — see readDispatchedIdentity).
+        const dispatched = readDispatchedIdentity(ctx, policy.identity.tenantId);
+        const effectiveEmployeeId = dispatched?.employeeId ?? policy.identity.employeeId;
+        const holdKey = `${policy.identity.tenantId}:${effectiveEmployeeId}:${event.toolName}`;
         let hold = boardHolds.get(holdKey);
         if (hold && hold.expiresAt < Date.now()) {
           boardHolds.delete(holdKey);
@@ -251,10 +286,11 @@ export default definePluginEntry({
         // browser, paperclip_contract_call, …).
         const decision = await policy.client.enforceTool({
           tenantId: policy.identity.tenantId,
-          employeeId: policy.identity.employeeId,
+          employeeId: effectiveEmployeeId,
           package: policy.identity.package,
           toolId: event.toolName,
           sessionId,
+          ...(dispatched?.traceId ? { traceId: dispatched.traceId } : {}),
         });
 
         if (decision.decision === "deny") {

@@ -367,6 +367,63 @@ describe("paperclip-contract trusted policy: control-plane enforce()", () => {
     }
   });
 
+  it("enforces with the DISPATCHED identity from the session extension (gap 1.5)", async () => {
+    const enf = startMockEnforce(() => ({ decision: "allow" }));
+    try {
+      const { policies } = register(policyConfig(enf.url));
+      const ctx = {
+        toolName: "web_fetch",
+        getSessionExtension: (ns: string) =>
+          ns === "dispatch"
+            ? {
+                envelope: {
+                  tenant_id: "ten-1",
+                  employee_id: "emp-dispatched",
+                  trace_id: "44444444-4444-4444-8444-444444444444",
+                },
+              }
+            : undefined,
+      };
+      await policies[0].evaluate(evt("web_fetch"), ctx as never);
+      expect(enf.lastBody()).toMatchObject({
+        tenant_id: "ten-1",
+        employee_id: "emp-dispatched",
+        trace_id: "44444444-4444-4444-8444-444444444444",
+      });
+    } finally {
+      await enf.close();
+    }
+  });
+
+  it("IGNORES a dispatched envelope for another tenant (cross-tenant gate, gap 1.5)", async () => {
+    const enf = startMockEnforce(() => ({ decision: "allow" }));
+    try {
+      const { policies } = register(policyConfig(enf.url));
+      const ctx = {
+        toolName: "web_fetch",
+        getSessionExtension: () => ({
+          envelope: { tenant_id: "tenant-OTHER", employee_id: "emp-evil" },
+        }),
+      };
+      await policies[0].evaluate(evt("web_fetch"), ctx as never);
+      expect(enf.lastBody()).toMatchObject({ tenant_id: "ten-1", employee_id: "emp-1" });
+      expect(enf.lastBody()!.employee_id).not.toBe("emp-evil");
+    } finally {
+      await enf.close();
+    }
+  });
+
+  it("falls back to the static identity when no dispatch extension exists", async () => {
+    const enf = startMockEnforce(() => ({ decision: "allow" }));
+    try {
+      const { policies } = register(policyConfig(enf.url));
+      await policies[0].evaluate(evt("web_fetch"), { toolName: "web_fetch" } as never);
+      expect(enf.lastBody()).toMatchObject({ tenant_id: "ten-1", employee_id: "emp-1" });
+    } finally {
+      await enf.close();
+    }
+  });
+
   it("allow → passes a non-facade tool through", async () => {
     const enf = startMockEnforce(() => ({ decision: "allow" }));
     try {
