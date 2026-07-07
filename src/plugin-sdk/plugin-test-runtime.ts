@@ -14,6 +14,13 @@ export {
   resolveWebSearchProviderContractEntriesForPluginId,
 } from "../plugins/contracts/registry.js";
 export { loadPluginManifestRegistry } from "../plugins/manifest-registry.js";
+export {
+  emitDiagnosticEventWithTrustedTraceContext,
+  emitInternalDiagnosticEvent as emitInternalDiagnosticEventForTest,
+  emitTrustedSecurityEvent,
+} from "../infra/diagnostic-events.js";
+export { runWithDiagnosticTraceContext } from "../infra/diagnostic-trace-context.js";
+export { logMessageDispatchStarted, logMessageProcessed } from "../logging/diagnostic.js";
 export { resolveBundledExplicitProviderContractsFromPublicArtifacts } from "../plugins/provider-contract-public-artifacts.js";
 export {
   initializeGlobalHookRunner,
@@ -102,3 +109,8 @@ export {
   type CapturedPluginRegistration,
 } from "../plugins/captured-registration.js";
 export { createRuntimeTaskFlow } from "../plugins/runtime/runtime-taskflow.js";
+export {
+  createPluginRuntimeMediaMock,
+  createPluginRuntimeMock,
+  type PluginRuntimeMediaMock,
+} from "./test-helpers/plugin-runtime-mock.js";

@@ -11,6 +11,18 @@ const FACADE_TOOL_NAME = "paperclip_contract_call";
 const DEFAULT_BASE_URL = "http://paperclip-4b:8080";
 const PLUGIN_VERSION = "2026.5.31";
 
+// Bundle-mcp namespaces aggregated MCP tools as "<server>__<connector>__<tool>"
+// (its TOOL_NAME_SEPARATOR is "__"). Native OpenClaw tools (exec, web_fetch,
+// browser, paperclip_contract_call) never contain the separator. These aggregated
+// tools are governed downstream at the LiteLLM /mcp chokepoint under their
+// canonical connector id; this plugin must not re-enforce them under the OpenClaw
+// display name (which CP can't resolve → connector_tool_not_found, surfaced as a
+// misleading "not permitted for your package" block).
+const BUNDLE_MCP_TOOL_SEPARATOR = "__";
+function isBundleMcpTool(toolName: unknown): boolean {
+  return typeof toolName === "string" && toolName.includes(BUNDLE_MCP_TOOL_SEPARATOR);
+}
+
 type BeforeToolCallResult = Record<string, unknown>;
 
 interface PolicyIdentity {
@@ -202,6 +214,12 @@ export default definePluginEntry({
       description:
         "Delegates tool allow/deny/approval to the control-plane Policy Guard per package; still applies operation-level contract risk for the Paperclip facade. Falls back to a static guard when unconfigured.",
       async evaluate(event): Promise<BeforeToolCallResult> {
+        // Bundle-mcp aggregated tools are governed at the LiteLLM /mcp chokepoint
+        // (with their canonical connector id); re-enforcing them here under the
+        // OpenClaw display name yields a false "not permitted for your package".
+        // Pass them through untouched. (Native tools have no "__".)
+        if (isBundleMcpTool(event.toolName)) return {};
+
         // No control plane configured → static behavior (keeps local/manual runs working).
         if (!policy) return legacyEvaluate(event);
 

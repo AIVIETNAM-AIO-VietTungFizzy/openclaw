@@ -1,3 +1,13 @@
+// Public gateway protocol entrypoint. Keep this barrel aligned with schema.ts
+// so clients can import wire types, JSON schemas, and validators from one place.
+export {
+  buildClawHubTrustErrorDetails,
+  ClawHubTrustErrorCodes,
+  isClawHubTrustErrorCode,
+  readClawHubTrustErrorDetails,
+  type ClawHubTrustErrorCode,
+  type ClawHubTrustErrorDetails,
+} from "./clawhub-trust-error-details.js";
 import { Compile, type Validator as TypeBoxValidator } from "typebox/compile";
 import {
   type AgentEvent,
@@ -126,6 +136,8 @@ import {
   type ChatEvent,
   ChatEventSchema,
   ChatHistoryParamsSchema,
+  type ChatMetadataParams,
+  ChatMetadataParamsSchema,
   ChatMessageGetResultSchema,
   ChatMessageGetParamsSchema,
   type ChatInjectParams,
@@ -206,7 +218,9 @@ import {
   PluginsSessionActionParamsSchema,
   PluginsSessionActionResultSchema,
   type PluginsUiDescriptorsParams,
+  type PluginsUiDescriptorsResult,
   PluginsUiDescriptorsParamsSchema,
+  PluginsUiDescriptorsResultSchema,
   ErrorCodes,
   type EnvironmentSummary,
   EnvironmentSummarySchema,
@@ -317,6 +331,16 @@ import {
   SessionsCompactionListParamsSchema,
   type SessionsCompactionRestoreParams,
   SessionsCompactionRestoreParamsSchema,
+  type SessionFileBrowserEntry,
+  SessionFileBrowserEntrySchema,
+  type SessionFileBrowserResult,
+  SessionFileBrowserResultSchema,
+  type SessionFileEntry,
+  SessionFileEntrySchema,
+  type SessionFileKind,
+  SessionFileKindSchema,
+  type SessionFileRelevance,
+  SessionFileRelevanceSchema,
   type SessionOperationEvent,
   type SessionsCreateParams,
   SessionsCreateParamsSchema,
@@ -324,6 +348,14 @@ import {
   SessionsDeleteParamsSchema,
   type SessionsDescribeParams,
   SessionsDescribeParamsSchema,
+  type SessionsFilesGetParams,
+  SessionsFilesGetParamsSchema,
+  type SessionsFilesGetResult,
+  SessionsFilesGetResultSchema,
+  type SessionsFilesListParams,
+  SessionsFilesListParamsSchema,
+  type SessionsFilesListResult,
+  SessionsFilesListResultSchema,
   type SessionsListParams,
   SessionsListParamsSchema,
   type SessionsMessagesSubscribeParams,
@@ -385,6 +417,10 @@ import {
   SkillsProposalInspectResultSchema,
   type SkillsProposalRecordResult,
   SkillsProposalRecordResultSchema,
+  type SkillsProposalRequestRevisionParams,
+  SkillsProposalRequestRevisionParamsSchema,
+  type SkillsProposalRequestRevisionResult,
+  SkillsProposalRequestRevisionResultSchema,
   type SkillsProposalReviseParams,
   SkillsProposalReviseParamsSchema,
   type SkillsProposalUpdateParams,
@@ -458,19 +494,30 @@ import {
   WizardStepSchema,
 } from "./schema.js";
 
+/** Normalized validation error shape exposed by every protocol validator. */
 export type ValidationError = {
+  /** Failed schema keyword, when the validator can report one. */
   keyword?: string;
+  /** JSON-pointer path to the failing data location. */
   instancePath?: string;
+  /** JSON-pointer path to the failing schema location. */
   schemaPath?: string;
+  /** Validator-specific keyword parameters for richer diagnostics. */
   params?: Record<string, unknown>;
+  /** Human-readable validation message. */
   message?: string;
 };
 
+/** Runtime validator shape shared by gateway clients and server handlers. */
 export type ProtocolValidator<T = unknown> = ((data: unknown) => data is T) & {
+  /** Last validation errors, matching Ajv-style caller expectations. */
   errors: ValidationError[] | null;
+  /** Original schema used by the validator, exposed for diagnostics/tests. */
   schema: unknown;
 };
 
+// Defer TypeBox compilation until the first validation call. Importing this
+// module is common in CLIs/tests, so eager compilation would add startup cost.
 function lazyCompile<T = unknown>(schema: unknown): ProtocolValidator<T> {
   let compiled: TypeBoxValidator | undefined;
   let errors: ValidationError[] | null = null;
@@ -493,6 +540,7 @@ function lazyCompile<T = unknown>(schema: unknown): ProtocolValidator<T> {
       enumerable: true,
       get: () => errors,
       set: (nextErrors: ValidationError[] | null | undefined) => {
+        // Preserve Ajv-compatible mutability for callers/tests that clear errors.
         errors = nextErrors ?? null;
       },
     },
@@ -506,6 +554,8 @@ function lazyCompile<T = unknown>(schema: unknown): ProtocolValidator<T> {
   return validate;
 }
 
+// Public per-method validators. Names intentionally mirror the exported schema
+// constants so call sites can pair validation with the wire contract directly.
 export const validateCommandsListParams = lazyCompile<CommandsListParams>(CommandsListParamsSchema);
 export const validateConnectParams = lazyCompile<ConnectParams>(ConnectParamsSchema);
 export const validateRequestFrame = lazyCompile<RequestFrame>(RequestFrameSchema);
@@ -611,6 +661,12 @@ export const validateSessionsDescribeParams = lazyCompile<SessionsDescribeParams
 );
 export const validateSessionsResolveParams = lazyCompile<SessionsResolveParams>(
   SessionsResolveParamsSchema,
+);
+export const validateSessionsFilesListParams = lazyCompile<SessionsFilesListParams>(
+  SessionsFilesListParamsSchema,
+);
+export const validateSessionsFilesGetParams = lazyCompile<SessionsFilesGetParams>(
+  SessionsFilesGetParamsSchema,
 );
 export const validateSessionsCreateParams = lazyCompile<SessionsCreateParams>(
   SessionsCreateParamsSchema,
@@ -781,6 +837,8 @@ export const validateSkillsProposalUpdateParams = lazyCompile<SkillsProposalUpda
 export const validateSkillsProposalReviseParams = lazyCompile<SkillsProposalReviseParams>(
   SkillsProposalReviseParamsSchema,
 );
+export const validateSkillsProposalRequestRevisionParams =
+  lazyCompile<SkillsProposalRequestRevisionParams>(SkillsProposalRequestRevisionParamsSchema);
 export const validateSkillsProposalActionParams = lazyCompile<SkillsProposalActionParams>(
   SkillsProposalActionParamsSchema,
 );
@@ -840,6 +898,9 @@ export const validatePluginApprovalResolveParams = lazyCompile<PluginApprovalRes
 export const validatePluginsUiDescriptorsParams = lazyCompile<PluginsUiDescriptorsParams>(
   PluginsUiDescriptorsParamsSchema,
 );
+export const validatePluginsUiDescriptorsResult = lazyCompile<PluginsUiDescriptorsResult>(
+  PluginsUiDescriptorsResultSchema,
+);
 export const validatePluginsSessionActionParams = lazyCompile<PluginsSessionActionParams>(
   PluginsSessionActionParamsSchema,
 );
@@ -854,6 +915,7 @@ export const validateExecApprovalsNodeSetParams = lazyCompile<ExecApprovalsNodeS
 );
 export const validateLogsTailParams = lazyCompile<LogsTailParams>(LogsTailParamsSchema);
 export const validateChatHistoryParams = lazyCompile(ChatHistoryParamsSchema);
+export const validateChatMetadataParams = lazyCompile<ChatMetadataParams>(ChatMetadataParamsSchema);
 export const validateChatMessageGetParams = lazyCompile(ChatMessageGetParamsSchema);
 export const validateChatSendParams = lazyCompile(ChatSendParamsSchema);
 export const validateChatAbortParams = lazyCompile<ChatAbortParams>(ChatAbortParamsSchema);
@@ -878,6 +940,7 @@ function firstStringParam(value: unknown): string | undefined {
   return undefined;
 }
 
+/** Convert validator errors into compact operator-facing failure text. */
 export function formatValidationErrors(errors: ValidationError[] | null | undefined) {
   if (!errors?.length) {
     return "unknown validation error";
@@ -912,6 +975,8 @@ export function formatValidationErrors(errors: ValidationError[] | null | undefi
 
     const failingKeyword =
       typeof err?.params?.failingKeyword === "string" ? err.params.failingKeyword : "";
+    // TypeBox reports conditional required-property misses through if/then
+    // keywords, which otherwise hide the actionable missing-property context.
     const message =
       keyword === "then" || (keyword === "if" && failingKeyword === "then")
         ? "must have required conditional properties"
@@ -930,6 +995,8 @@ export function formatValidationErrors(errors: ValidationError[] | null | undefi
   return unique.join("; ");
 }
 
+// Schema exports stay explicit to make additions/removals reviewable as public
+// protocol surface changes.
 export {
   ConnectParamsSchema,
   HelloOkSchema,
@@ -983,6 +1050,15 @@ export {
   SessionsPreviewParamsSchema,
   SessionsDescribeParamsSchema,
   SessionsResolveParamsSchema,
+  SessionFileBrowserEntrySchema,
+  SessionFileBrowserResultSchema,
+  SessionFileEntrySchema,
+  SessionFileKindSchema,
+  SessionFileRelevanceSchema,
+  SessionsFilesGetParamsSchema,
+  SessionsFilesGetResultSchema,
+  SessionsFilesListParamsSchema,
+  SessionsFilesListResultSchema,
   SessionsCompactionListParamsSchema,
   SessionsCompactionGetParamsSchema,
   SessionsCompactionBranchParamsSchema,
@@ -1078,6 +1154,7 @@ export {
   PluginsSessionActionParamsSchema,
   PluginsSessionActionResultSchema,
   PluginsUiDescriptorsParamsSchema,
+  PluginsUiDescriptorsResultSchema,
   ModelsListParamsSchema,
   SkillsStatusParamsSchema,
   ToolsCatalogParamsSchema,
@@ -1097,6 +1174,8 @@ export {
   SkillsProposalCreateParamsSchema,
   SkillsProposalUpdateParamsSchema,
   SkillsProposalReviseParamsSchema,
+  SkillsProposalRequestRevisionParamsSchema,
+  SkillsProposalRequestRevisionResultSchema,
   SkillsProposalActionParamsSchema,
   SkillsProposalApplyResultSchema,
   SkillsProposalRecordResultSchema,
@@ -1125,6 +1204,7 @@ export {
   ExecApprovalRequestParamsSchema,
   ExecApprovalResolveParamsSchema,
   ChatHistoryParamsSchema,
+  ChatMetadataParamsSchema,
   ChatSendParamsSchema,
   ChatInjectParamsSchema,
   UpdateRunParamsSchema,
@@ -1138,6 +1218,7 @@ export {
   errorShape,
 };
 
+// Type exports mirror the schema exports for downstream TypeScript consumers.
 export type {
   GatewayFrame,
   ConnectParams,
@@ -1224,6 +1305,15 @@ export type {
   AgentsFilesGetResult,
   AgentsFilesSetParams,
   AgentsFilesSetResult,
+  SessionFileBrowserEntry,
+  SessionFileBrowserResult,
+  SessionFileEntry,
+  SessionFileKind,
+  SessionFileRelevance,
+  SessionsFilesListParams,
+  SessionsFilesListResult,
+  SessionsFilesGetParams,
+  SessionsFilesGetResult,
   ArtifactSummary,
   ArtifactsListParams,
   ArtifactsListResult,
@@ -1233,6 +1323,7 @@ export type {
   ArtifactsDownloadResult,
   AgentsListParams,
   AgentsListResult,
+  ChatMetadataParams,
   CommandsListParams,
   CommandsListResult,
   CommandEntry,
@@ -1258,6 +1349,8 @@ export type {
   SkillsProposalCreateParams,
   SkillsProposalUpdateParams,
   SkillsProposalReviseParams,
+  SkillsProposalRequestRevisionParams,
+  SkillsProposalRequestRevisionResult,
   SkillsProposalActionParams,
   SkillsProposalApplyResult,
   SkillsProposalRecordResult,

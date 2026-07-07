@@ -1,3 +1,4 @@
+// Codex plugin module implements command handlers behavior.
 import crypto from "node:crypto";
 import { resolveAgentDir, resolveSessionAgentIds } from "openclaw/plugin-sdk/agent-runtime";
 import { parseStrictPositiveInteger } from "openclaw/plugin-sdk/number-runtime";
@@ -23,6 +24,7 @@ import {
   writeCodexAppServerBinding,
 } from "./app-server/session-binding.js";
 import { readCodexAccountAuthOverview } from "./command-account.js";
+import { canMutateCodexHost } from "./command-authorization.js";
 import {
   buildHelp,
   formatAccount,
@@ -496,7 +498,7 @@ export async function handleCodexSubcommand(
       return buildCodexComputerUseMenuReply();
     }
     return {
-      text: await handleComputerUseCommand(deps, options.pluginConfig, rest),
+      text: await handleComputerUseCommand(deps, ctx, options.pluginConfig, rest),
     };
   }
   if (normalized === "mcp") {
@@ -630,6 +632,7 @@ function returnsBeforeNativeCodexResume(args: readonly string[]): boolean {
 
 async function handleComputerUseCommand(
   deps: CodexCommandDeps,
+  ctx: PluginCommandContext,
   pluginConfig: unknown,
   args: string[],
 ): Promise<string> {
@@ -639,6 +642,9 @@ async function handleComputerUseCommand(
       "Usage: /codex computer-use [status|install] [--source <marketplace-source>] [--marketplace-path <path>] [--marketplace <name>]",
       "Checks or installs the configured Codex Computer Use plugin through app-server.",
     ].join("\n");
+  }
+  if (parsed.action === "install" && !canMutateCodexHost(ctx)) {
+    return "Only an owner or operator.admin gateway client can configure Codex Computer Use.";
   }
   const params: CodexComputerUseSetupParams = {
     pluginConfig,
@@ -682,6 +688,7 @@ async function bindConversation(
     workspaceDir,
     agentDir: scope.agentDir,
     sessionKey: ctx.sessionKey,
+    agentId: scope.sessionAgentId,
     threadId: parsed.threadId,
     model: parsed.model,
     modelProvider: parsed.provider,
@@ -1035,13 +1042,17 @@ async function resolveControlSessionFile(ctx: PluginCommandContext): Promise<str
   return (await resolveControlTarget(ctx))?.sessionFile;
 }
 
-function resolveCodexConversationControlScope(ctx: PluginCommandContext): { agentDir: string } {
+function resolveCodexConversationControlScope(ctx: PluginCommandContext): {
+  agentDir: string;
+  sessionAgentId: string;
+} {
   const { sessionAgentId } = resolveSessionAgentIds({
     sessionKey: ctx.sessionKey,
     config: ctx.config,
   });
   return {
     agentDir: resolveAgentDir(ctx.config, sessionAgentId),
+    sessionAgentId,
   };
 }
 
